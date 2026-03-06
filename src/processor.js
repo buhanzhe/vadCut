@@ -7,7 +7,8 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 
-const { getVideoMetadata, extractAudioWav, trimVideo } = require('./ffmpegUtils');
+const { getVideoMetadata, extractAudioWav, trimVideo, getEncoderInfo, detectEncoder, makeTempPath } = require('./ffmpegUtils');
+
 const { detectSpeechBounds } = require('./vad');
 
 const VIDEO_EXTENSIONS = new Set([
@@ -16,7 +17,6 @@ const VIDEO_EXTENSIONS = new Set([
 ]);
 
 const OUTPUT_SUBDIR = '剪辑';
-const TEMP_DIR = path.join(os.tmpdir(), 'vad-cut');
 
 function formatTime(seconds) {
   const m = Math.floor(seconds / 60);
@@ -67,11 +67,9 @@ async function processVideo(videoPath, outputDir, callbacks = {}) {
     return { skipped: true };
   }
 
-  if (!fs.existsSync(TEMP_DIR)) {
-    fs.mkdirSync(TEMP_DIR, { recursive: true });
-  }
   // 临时 WAV 必须用纯 ASCII 路径（ffmpeg-static 在 Windows 下的限制）
-  const wavPath = path.join(TEMP_DIR, `audio_${Date.now()}.wav`);
+  // 加随机后缀防止并发时路径冲突
+  const wavPath = makeTempPath('.wav');
 
   try {
     // 1. 元数据
@@ -114,6 +112,7 @@ async function processVideo(videoPath, outputDir, callbacks = {}) {
     }
 
     // 4. 剪辑
+    onLog(`编码器: ${await getEncoderInfo()}`);
     onLog('剪辑中...');
     onStage('trim', 0);
     await trimVideo(videoPath, outputPath, firstSpeechTime, lastSpeechTime, totalDuration,
@@ -129,6 +128,17 @@ async function processVideo(videoPath, outputDir, callbacks = {}) {
       try { fs.unlinkSync(wavPath); } catch (_) {}
     }
   }
+}
+
+/**
+ * 根据硬件能力决定并发数：
+ *   GPU 编码：编码在显卡上，CPU 有余量 → 并发 3
+ *   纯 CPU  ：libx264 已多线程，避免抢占 → max(1, min(3, cpuCount÷4))
+ */
+async function calcConcurrency() {
+  const gpuEnc = await detectEncoder();
+  if (gpuEnc) return 3;
+  return Math.max(1, Math.min(3, Math.floor(os.cpus().length / 4)));
 }
 
 /**
@@ -168,39 +178,65 @@ async function processFolder(folderPath, callbacks = {}, signal = { cancelled: f
     fs.mkdirSync(outputDir, { recursive: true });
   }
 
+  const concurrency = await calcConcurrency();
+  onFileLog(-1, `并发数: ${concurrency}`);
+
   let success = 0, skipped = 0, errors = 0;
-  const timings = []; // { name, elapsed }
+  const timings = [];
   const folderStart = Date.now();
 
-  for (let i = 0; i < videoFiles.length; i++) {
-    if (signal.cancelled) break;
+  // 信号量：同时最多 concurrency 个任务运行
+  let running = 0;
+  let nextIndex = 0;
+  const results = new Array(videoFiles.length);
 
-    const videoPath = videoFiles[i];
-    onFileStart(i, videoPath);
+  await new Promise((resolveAll) => {
+    function tryStart() {
+      while (running < concurrency && nextIndex < videoFiles.length && !signal.cancelled) {
+        const i = nextIndex++;
+        running++;
+        const videoPath = videoFiles[i];
+        onFileStart(i, videoPath);
 
-    try {
-      const result = await processVideo(videoPath, outputDir, {
-        onLog: (msg) => onFileLog(i, msg),
-        onStage: (stage, pct) => onFileStage(i, stage, pct),
-      });
-      onFileDone(i, result);
-      if (result.skipped) {
-        skipped++;
-      } else {
-        success++;
-        if (result.elapsed) {
-          timings.push({ name: path.basename(videoPath), elapsed: result.elapsed });
-        }
+        processVideo(videoPath, outputDir, {
+          onLog: (msg) => onFileLog(i, msg),
+          onStage: (stage, pct) => onFileStage(i, stage, pct),
+        })
+          .then((result) => { results[i] = { ok: true, result }; })
+          .catch((err) => { results[i] = { ok: false, err }; })
+          .finally(() => {
+            running--;
+            const r = results[i];
+            if (r.ok) {
+              onFileDone(i, r.result);
+              if (r.result.skipped) {
+                skipped++;
+              } else {
+                success++;
+                if (r.result.elapsed) {
+                  timings.push({ name: path.basename(videoPath), elapsed: r.result.elapsed });
+                }
+              }
+            } else {
+              onFileError(i, r.err.message);
+              errors++;
+            }
+            if (signal.cancelled || nextIndex >= videoFiles.length) {
+              if (running === 0) resolveAll();
+            } else {
+              tryStart();
+            }
+          });
       }
-    } catch (err) {
-      onFileError(i, err.message);
-      errors++;
+      if ((signal.cancelled || nextIndex >= videoFiles.length) && running === 0) {
+        resolveAll();
+      }
     }
-  }
+    tryStart();
+  });
 
   const totalElapsed = Date.now() - folderStart;
 
-  // 在日志里输出耗时汇总
   if (timings.length > 0) {
     const lines = [`── 耗时汇总 ─────────────────────`];
     for (const t of timings) {
@@ -208,7 +244,6 @@ async function processFolder(folderPath, callbacks = {}, signal = { cancelled: f
     }
     lines.push(`  合计: ${formatElapsed(totalElapsed)}（共 ${timings.length} 个文件）`);
     lines.push('──────────────────────────────────');
-    // 通过最后一个文件的 onFileLog 或 onAllDone 带出；这里统一用 index=-1 约定为全局日志
     for (const l of lines) onFileLog(-1, l);
   }
 
