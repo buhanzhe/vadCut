@@ -129,12 +129,22 @@ function extractAudioWav(videoPath, wavPath, onProgress) {
   });
 }
 
-// 这些输入格式含有不兼容 MP4 的编解码（AC-3、MPEG-2），必须重新编码
-const REENCODE_EXTS = new Set(['.mts', '.m2ts', '.ts', '.mpg', '.mpeg', '.vob']);
+// 视频美化滤镜链：皮肤平滑（hqdn3d）+ 提亮美白（eq）+ 轻度模糊（unsharp 负值）
+// 同时缩放到 720p 并保持宽高比，不足部分填黑边
+const VIDEO_FILTER_CHAIN = [
+  'scale=1280:720:force_original_aspect_ratio=decrease',
+  'pad=1280:720:(ow-iw)/2:(oh-ih)/2',
+  'hqdn3d=luma_spatial=4:chroma_spatial=3:luma_tmp=6:chroma_tmp=4.5',
+  'eq=brightness=0.04:contrast=1.05:saturation=0.9:gamma=0.95',
+  'unsharp=luma_msize_x=5:luma_msize_y=5:luma_amount=-0.3',
+].join(',');
+
+// 音频降噪滤镜链：去低频底噪（highpass）+ FFT 自适应降噪（afftdn）+ 去高频噪声（lowpass）
+const AUDIO_FILTER_CHAIN = 'highpass=f=100,afftdn=nr=12:nf=-35:nt=w:track_noise=true,lowpass=f=12000';
 
 /**
- * 掐头去尾剪辑视频
- * ffmpeg 输出到 ASCII 临时路径，完成后移动到 outputPath
+ * 掐头去尾剪辑视频，同时应用美化+降噪+720p/24fps/2500kbps 输出规格
+ * 所有格式统一重编码（流复制无法改变分辨率/帧率/码率）
  */
 function trimVideo(inputPath, outputPath, startTime, endTime, totalDuration, onProgress) {
   return new Promise((resolve, reject) => {
@@ -148,72 +158,22 @@ function trimVideo(inputPath, outputPath, startTime, endTime, totalDuration, onP
       return;
     }
 
-    const inputExt = path.extname(inputPath).toLowerCase();
-
-    // MTS/TS/MPEG 等格式含 AC-3 或 MPEG-2 流，无法 stream copy 进 MP4，直接重新编码
-    if (REENCODE_EXTS.has(inputExt)) {
-      return trimVideoReencode(inputPath, outputPath, actualStart, duration, onProgress)
-        .then(resolve)
-        .catch(reject);
-    }
-
-    const ext = path.extname(outputPath).toLowerCase();
-    const tmpOut = makeTempPath(ext);
+    const tmpOut = makeTempPath('.mp4');
 
     const cmd = ffmpeg(inputPath)
       .seekInput(actualStart)
       .duration(duration)
-      .outputOptions([
-        '-c', 'copy',
-        '-avoid_negative_ts', 'make_zero',
-        '-map', '0',
-      ])
-      .output(tmpOut);
-
-    if (onProgress) {
-      cmd.on('progress', (info) => {
-        if (info.percent != null) onProgress(Math.min(99, info.percent));
-      });
-    }
-
-    cmd
-      .on('error', (err) => {
-        if (fs.existsSync(tmpOut)) try { fs.unlinkSync(tmpOut); } catch (_) {}
-        // 任何 stream copy 失败都回退到重新编码
-        trimVideoReencode(inputPath, outputPath, actualStart, duration, onProgress)
-          .then(resolve)
-          .catch(reject);
-      })
-      .on('end', () => {
-        try {
-          moveFile(tmpOut, outputPath);
-          resolve();
-        } catch (e) {
-          reject(e);
-        }
-      })
-      .run();
-  });
-}
-
-/**
- * 重新编码方式剪辑（兼容性更好，但速度较慢）
- */
-function trimVideoReencode(inputPath, outputPath, startTime, duration, onProgress) {
-  return new Promise((resolve, reject) => {
-    const ext = path.extname(outputPath).toLowerCase();
-    const tmpOut = makeTempPath(ext);
-
-    const cmd = ffmpeg(inputPath)
-      .seekInput(startTime)
-      .duration(duration)
+      .videoFilters(VIDEO_FILTER_CHAIN)
+      .audioFilters(AUDIO_FILTER_CHAIN)
       .videoCodec('libx264')
-      .videoBitrate('4000k')
       .audioCodec('aac')
-      .audioBitrate('192k')
+      .audioBitrate('128k')
       .outputOptions([
+        '-r', '24',
+        '-b:v', '2500k',
+        '-maxrate', '2500k',
+        '-bufsize', '5000k',
         '-preset', 'fast',
-        '-crf', '18',
         '-movflags', '+faststart',
       ])
       .output(tmpOut);

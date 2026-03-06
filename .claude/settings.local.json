@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cmd /c \"rd /s /q \"\"%APPDATA%\\\\VAD-Cut\"\" 2>nul & rd /s /q \"\"%LOCALAPPDATA%\\\\VAD-Cut\"\" 2>nul & echo done\")",
+      "Bash(npm start)",
+      "Bash(taskkill /F /IM electron.exe)",
+      "Bash(taskkill /F /IM \"VAD-Cut.exe\")",
+      "Bash(cmd /c \"taskkill /F /IM electron.exe 2>nul & taskkill /F /IM VAD-Cut.exe 2>nul & echo cleared\")"
+    ]
+  }
+}

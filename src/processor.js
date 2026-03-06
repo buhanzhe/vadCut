@@ -58,9 +58,8 @@ async function processVideo(videoPath, outputDir, callbacks = {}) {
   const t0 = Date.now();
 
   const extRaw = path.extname(videoPath);           // 保留原始大小写，用于剥离
-  const ext = extRaw.toLowerCase();                  // 小写用于逻辑判断
   const nameWithoutExt = path.basename(videoPath, extRaw);  // 用原始大小写剥离，避免 00108.MTS → 00108.MTS.mp4
-  const outputExt = (ext === '.mts' || ext === '.m2ts') ? '.mp4' : ext;
+  const outputExt = '.mp4'; // 统一输出 MP4（重编码+美化+降噪需要）
   const outputPath = path.join(outputDir, nameWithoutExt + outputExt);
 
   if (fs.existsSync(outputPath)) {
@@ -109,15 +108,10 @@ async function processVideo(videoPath, outputDir, callbacks = {}) {
     const tailCut = Math.max(0, totalDuration - lastSpeechTime - 0.5);
 
     if (headCut < 1.0 && tailCut < 1.0) {
-      onLog('头尾冗余均不足1秒，直接复制');
-      onStage('trim', 0);
-      fs.copyFileSync(videoPath, outputPath);
-      onStage('trim', 100);
-      onLog(`耗时: ${formatElapsed(Date.now() - t0)}`);
-      return { headCut: 0, tailCut: 0, copied: true, outputPath };
+      onLog('头尾冗余均不足1秒，仅转码美化');
+    } else {
+      onLog(`将剪去开头 ${headCut.toFixed(1)}s，结尾 ${tailCut.toFixed(1)}s`);
     }
-
-    onLog(`将剪去开头 ${headCut.toFixed(1)}s，结尾 ${tailCut.toFixed(1)}s`);
 
     // 4. 剪辑
     onLog('剪辑中...');
