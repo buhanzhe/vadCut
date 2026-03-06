@@ -61,8 +61,8 @@ function detectSpeechBounds(wavPath, opts = {}) {
   const config = {
     sileroVad: {
       model: MODEL_PATH,
-      threshold: opts.threshold || 0.4,
-      minSilenceDuration: opts.minSilenceDuration || 0.3,
+      threshold: opts.threshold || 0.5,
+      minSilenceDuration: opts.minSilenceDuration || 0.5,
       minSpeechDuration: opts.minSpeechDuration || 0.25,
       maxSpeechDuration: opts.maxSpeechDuration || 30.0,
       windowSize: 512,

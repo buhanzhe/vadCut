@@ -22,6 +22,11 @@
       "from": "models/",
       "to": "models/",
       "filter": ["**/*.onnx"]
+    },
+    {
+      "from": "models/sherpa-onnx-wasm-simd-1.12.28-vad-asr-zh_en_ja_ko_cantonese-sense_voice_small/",
+      "to": "models/sherpa-onnx-wasm-simd-1.12.28-vad-asr-zh_en_ja_ko_cantonese-sense_voice_small/",
+      "filter": ["**/*.js", "**/*.wasm", "**/*.data"]
     }
   ],
   "directories": {

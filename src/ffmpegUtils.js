@@ -54,7 +54,7 @@ function moveFile(src, dest) {
 function testEncoder(encoder) {
   return new Promise((resolve) => {
     const proc = spawn(ffmpegPath, [
-      '-f', 'lavfi', '-i', 'color=c=black:s=128x128:r=1',
+      '-f', 'lavfi', '-i', 'color=c=black:s=320x240:r=1',
       '-vframes', '1',
       '-c:v', encoder,
       '-f', 'null', '-',
@@ -62,7 +62,20 @@ function testEncoder(encoder) {
 
     let stderr = '';
     proc.stderr.on('data', (d) => { stderr += d.toString(); });
-    proc.on('close', (code) => { resolve(code === 0); });
+    proc.on('close', (code) => {
+      if (code !== 0) {
+        // 从 stderr 中提取最精简的错误原因（取最后一条非空的 Error 行）
+        const errLine = stderr.split('\n')
+          .map(l => l.trim())
+          .filter(l => /^error/i.test(l))
+          .pop();
+        if (errLine) {
+          // 去掉 ffmpeg 地址前缀 "[xxx @ 0x...]"，只保留消息正文
+          _encoderDiagnostics[encoder] = errLine.replace(/\[.*?\]\s*/g, '').trim();
+        }
+      }
+      resolve(code === 0);
+    });
     proc.on('error', () => resolve(false));
   });
 }
@@ -92,6 +105,7 @@ const GPU_CANDIDATES = [
 
 // 缓存探测结果，{ encoder, label, extraOpts } 或 null（使用 CPU）
 let _encoderCache = undefined; // undefined = 未探测，null = 无 GPU
+const _encoderDiagnostics = {}; // encoder → 首次失败的错误摘要
 
 async function detectEncoder() {
   if (_encoderCache !== undefined) return _encoderCache;
@@ -110,7 +124,15 @@ async function detectEncoder() {
 /** 返回当前选用的编码器说明（供日志显示） */
 async function getEncoderInfo() {
   const enc = await detectEncoder();
-  return enc ? `${enc.label} (${enc.encoder})` : 'CPU (libx264)';
+  if (enc) return `${enc.label} (${enc.encoder})`;
+  // 拼接各 GPU 候选的诊断信息
+  const diags = GPU_CANDIDATES
+    .map(c => {
+      const d = _encoderDiagnostics[c.encoder];
+      return d ? `${c.label}: ${d}` : `${c.label}: 不可用`;
+    })
+    .join(' | ');
+  return `CPU (libx264) — GPU 不可用: ${diags}`;
 }
 
 // ─── 元数据 ──────────────────────────────────────────────────────────────────

@@ -315,52 +315,62 @@ function registerIPCListeners() {
 
 // ── Event Handlers ─────────────────────────────────────────────────────────
 
-// 拖拽进入
-dropzone.addEventListener('dragenter', (e) => {
-  e.preventDefault();
-  dropzone.classList.add('drag-over');
-});
-dropzone.addEventListener('dragover', (e) => {
-  e.preventDefault();
-  e.dataTransfer.dropEffect = 'copy';
-  dropzone.classList.add('drag-over');
-});
-dropzone.addEventListener('dragleave', (e) => {
-  if (!dropzone.contains(e.relatedTarget)) {
-    dropzone.classList.remove('drag-over');
-  }
-});
-
-// 拖拽放入
-dropzone.addEventListener('drop', (e) => {
-  e.preventDefault();
-  dropzone.classList.remove('drag-over');
-
+// 从拖拽事件中提取文件夹路径（Electron File 对象含 .path 属性）
+function getFolderPathFromDrop(e) {
   const items = e.dataTransfer.items;
   if (items && items.length > 0) {
     const entry = items[0].webkitGetAsEntry?.();
     if (entry && entry.isDirectory) {
-      // webkitGetAsEntry 返回的 fullPath 不是系统路径，需要用 file API
       const file = e.dataTransfer.files[0];
-      if (file && file.path) {
-        setFolder(file.path);
-        return;
-      }
+      if (file && file.path) return file.path;
     }
   }
-
-  // fallback: 直接读取 files[0].path
+  // fallback: 直接读取 files[0].path（文件夹拖入时 size === 0，无扩展名）
   const files = e.dataTransfer.files;
-  if (files.length > 0) {
-    const f = files[0];
-    // Electron 中 File 对象有 .path 属性
-    if (f.path) {
-      // 判断是否为文件夹：Electron 拖拽文件夹时 size === 0
-      // 更可靠方式是检查扩展名是否为空
-      const p = f.path;
-      setFolder(p);
-    }
+  if (files.length > 0 && files[0].path) return files[0].path;
+  return null;
+}
+
+// 全局 dragover：允许拖拽到整个窗口
+// dragenter 必须 preventDefault 才能触发 drop（Chromium 规范）
+let _dragDepth = 0;
+
+document.addEventListener('dragenter', (e) => {
+  e.preventDefault();
+  _dragDepth++;
+  if (dropzone.classList.contains('hidden')) {
+    document.body.classList.add('drag-over-body');
+  } else {
+    dropzone.classList.add('drag-over');
   }
+});
+
+document.addEventListener('dragover', (e) => {
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'copy';
+});
+
+document.addEventListener('dragleave', (e) => {
+  e.preventDefault();
+  _dragDepth--;
+  if (_dragDepth <= 0) {
+    _dragDepth = 0;
+    dropzone.classList.remove('drag-over');
+    document.body.classList.remove('drag-over-body');
+  }
+});
+
+// 全局 drop：无论当前处于哪个 UI 状态都能接收文件夹
+document.addEventListener('drop', (e) => {
+  e.preventDefault();
+  _dragDepth = 0;
+  dropzone.classList.remove('drag-over');
+  document.body.classList.remove('drag-over-body');
+
+  if (state.running) return; // 处理中不接受新文件夹
+
+  const folderPath = getFolderPathFromDrop(e);
+  if (folderPath) setFolder(folderPath);
 });
 
 // 点击选择

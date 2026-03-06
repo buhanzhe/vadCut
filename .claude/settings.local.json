@@ -5,7 +5,10 @@
       "Bash(npm start)",
       "Bash(taskkill /F /IM electron.exe)",
       "Bash(taskkill /F /IM \"VAD-Cut.exe\")",
-      "Bash(cmd /c \"taskkill /F /IM electron.exe 2>nul & taskkill /F /IM VAD-Cut.exe 2>nul & echo cleared\")"
+      "Bash(cmd /c \"taskkill /F /IM electron.exe 2>nul & taskkill /F /IM VAD-Cut.exe 2>nul & echo cleared\")",
+      "Bash(cmd /c \"rd /s /q c:\\\\nodeWorkspace\\\\vadCut\\\\dist\")",
+      "Bash(ELECTRON_BUILDER_CACHE=\"$USERPROFILE/AppData/Local/electron-builder/Cache\" npm run build)",
+      "Bash(npm run build)"
     ]
   }
 }
