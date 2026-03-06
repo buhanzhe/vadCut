@@ -1,0 +1,39 @@
+{
+  "appId": "com.vadcut.app",
+  "productName": "VAD-Cut",
+  "copyright": "Copyright © 2025",
+  "asar": true,
+  "asarUnpack": [
+    "node_modules/ffmpeg-static/**",
+    "node_modules/sherpa-onnx/**"
+  ],
+  "files": [
+    "electron/**",
+    "renderer/**",
+    "src/**",
+    "node_modules/**",
+    "!node_modules/electron/**",
+    "!node_modules/.cache/**",
+    "!**/*.map",
+    "!**/*.md"
+  ],
+  "extraResources": [
+    {
+      "from": "models/",
+      "to": "models/",
+      "filter": ["**/*.onnx"]
+    }
+  ],
+  "directories": {
+    "output": "dist"
+  },
+  "win": {
+    "target": [
+      {
+        "target": "zip",
+        "arch": ["x64"]
+      }
+    ],
+    "icon": "build/icon.ico"
+  }
+}
