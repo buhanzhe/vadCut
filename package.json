@@ -14,7 +14,9 @@
     "sherpa-onnx": "^1.10.30"
   },
   "devDependencies": {
-    "electron": "^33.4.11"
+    "@resvg/resvg-js": "^2.6.2",
+    "electron": "^33.4.11",
+    "to-ico": "^1.1.5"
   },
   "engines": {
     "node": ">=18.0.0"

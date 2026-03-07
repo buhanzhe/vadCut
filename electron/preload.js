@@ -15,6 +15,11 @@ contextBridge.exposeInMainWorld('vadCut', {
   // 取消处理
   cancelProcess: () => ipcRenderer.invoke('process:cancel'),
 
+  // 窗口控制
+  windowMinimize: () => ipcRenderer.send('window:minimize'),
+  windowMaximize: () => ipcRenderer.send('window:maximize'),
+  windowClose:    () => ipcRenderer.send('window:close'),
+
   // 监听主进程推送的事件
   on: (channel, fn) => {
     const allowed = [
@@ -25,7 +30,7 @@ contextBridge.exposeInMainWorld('vadCut', {
       'process:fileDone',
       'process:fileError',
       'process:allDone',
-      'init:folder',
+      'window:maximized',
     ];
     if (allowed.includes(channel)) {
       ipcRenderer.on(channel, (_event, ...args) => fn(...args));

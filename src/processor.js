@@ -5,9 +5,8 @@
  */
 const path = require('path');
 const fs = require('fs');
-const os = require('os');
 
-const { getVideoMetadata, extractAudioWav, trimVideo, getEncoderInfo, detectEncoder, makeTempPath } = require('./ffmpegUtils');
+const { getVideoMetadata, extractAudioWav, trimVideo, getEncoderInfo, makeTempPath } = require('./ffmpegUtils');
 
 const { detectSpeechBounds } = require('./vad');
 const { transcribeVideo } = require('./asr');
@@ -143,44 +142,7 @@ async function processVideo(videoPath, outputDir, callbacks = {}, options = {}) 
   }
 }
 
-const MAX_CONCURRENCY = 6;
-
-/**
- * 采样当前 CPU 空闲率（500ms 快照差值法）
- * @returns {Promise<number>} 0~1，越高代表越空闲
- */
-function sampleCpuIdle() {
-  return new Promise((resolve) => {
-    const snap1 = os.cpus().map((c) => ({ ...c.times }));
-    setTimeout(() => {
-      let idle = 0, total = 0;
-      os.cpus().forEach((cpu, i) => {
-        for (const k of Object.keys(cpu.times)) {
-          const d = cpu.times[k] - snap1[i][k];
-          total += d;
-          if (k === 'idle') idle += d;
-        }
-      });
-      resolve(total > 0 ? idle / total : 1);
-    }, 500);
-  });
-}
-
-/**
- * 根据硬件能力计算初始并发数和最大并发数上限
- *   GPU 编码：编码在显卡上，CPU 主要跑 VAD+解封装，余量大 → 初始 3，上限 6
- *   纯 CPU  ：libx264 多线程，按核心数缩放 → 初始 cpuCount÷4，上限 cpuCount÷2（≤6）
- */
-async function calcConcurrency() {
-  const gpuEnc = await detectEncoder();
-  const cpuCount = os.cpus().length;
-  if (gpuEnc) {
-    return { initial: 3, max: MAX_CONCURRENCY };
-  }
-  const initial = Math.max(1, Math.floor(cpuCount / 4));
-  const max = Math.min(MAX_CONCURRENCY, Math.max(initial, Math.floor(cpuCount / 2)));
-  return { initial, max };
-}
+const MAX_CONCURRENCY = 4;
 
 /**
  * 处理整个文件夹
@@ -219,38 +181,19 @@ async function processFolder(folderPath, callbacks = {}, signal = { cancelled: f
     fs.mkdirSync(outputDir, { recursive: true });
   }
 
-  const { initial, max } = await calcConcurrency();
-  let concurrency = initial;
-  onFileLog(-1, `并发数: ${concurrency}（上限 ${max}）`);
+  const concurrency = Math.min(MAX_CONCURRENCY, videoFiles.length);
+  onFileLog(-1, `并发数: ${concurrency}`);
 
   let success = 0, skipped = 0, errors = 0;
   const timings = [];
   const folderStart = Date.now();
 
-  // 每 5 秒根据 CPU 空闲率动态调整并发上限
-  // 空闲率 > 60%：尝试升并发；< 30%：降并发
   let running = 0;
   let nextIndex = 0;
   const results = new Array(videoFiles.length);
 
-  // 前置声明，供 adjustTimer 内部调用
-  let tryStart;
-
-  const adjustTimer = setInterval(async () => {
-    if (nextIndex >= videoFiles.length || signal.cancelled) return;
-    const idle = await sampleCpuIdle();
-    if (idle > 0.6 && concurrency < max) {
-      concurrency++;
-      onFileLog(-1, `CPU 空闲率 ${(idle * 100).toFixed(0)}%，并发升至 ${concurrency}`);
-      tryStart();
-    } else if (idle < 0.1 && concurrency > 1) {
-      concurrency--;
-      onFileLog(-1, `CPU 空闲率 ${(idle * 100).toFixed(0)}%，并发降至 ${concurrency}`);
-    }
-  }, 5000);
-
   await new Promise((resolveAll) => {
-    tryStart = function () {
+    function tryStart() {
       while (running < concurrency && nextIndex < videoFiles.length && !signal.cancelled) {
         const i = nextIndex++;
         running++;
@@ -290,11 +233,9 @@ async function processFolder(folderPath, callbacks = {}, signal = { cancelled: f
       if ((signal.cancelled || nextIndex >= videoFiles.length) && running === 0) {
         resolveAll();
       }
-    };
+    }
     tryStart();
   });
-
-  clearInterval(adjustTimer);
 
   const totalElapsed = Date.now() - folderStart;
 

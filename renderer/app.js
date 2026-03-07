@@ -1,5 +1,23 @@
 'use strict';
 
+// ── Theme ───────────────────────────────────────────────────
+(function initTheme() {
+  const saved = localStorage.getItem('vadcut-theme') || 'dark';
+  document.documentElement.setAttribute('data-theme', saved);
+})();
+
+function applyTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
+  localStorage.setItem('vadcut-theme', theme);
+  // 切换图标：深色模式显示太阳，浅色模式显示月亮
+  const iconDark  = document.getElementById('icon-theme-dark');
+  const iconLight = document.getElementById('icon-theme-light');
+  if (iconDark && iconLight) {
+    iconDark.style.display  = theme === 'dark'  ? '' : 'none';
+    iconLight.style.display = theme === 'light' ? '' : 'none';
+  }
+}
+
 function formatElapsed(ms) {
   const totalSec = ms / 1000;
   if (totalSec < 60) return `${totalSec.toFixed(1)}秒`;
@@ -316,64 +334,6 @@ function registerIPCListeners() {
 
 // ── Event Handlers ─────────────────────────────────────────────────────────
 
-// 从拖拽事件中提取文件夹路径（Electron File 对象含 .path 属性）
-function getFolderPathFromDrop(e) {
-  const items = e.dataTransfer.items;
-  if (items && items.length > 0) {
-    const entry = items[0].webkitGetAsEntry?.();
-    if (entry && entry.isDirectory) {
-      const file = e.dataTransfer.files[0];
-      if (file && file.path) return file.path;
-    }
-  }
-  // fallback: 直接读取 files[0].path（文件夹拖入时 size === 0，无扩展名）
-  const files = e.dataTransfer.files;
-  if (files.length > 0 && files[0].path) return files[0].path;
-  return null;
-}
-
-// 全局 dragover：允许拖拽到整个窗口
-// dragenter 必须 preventDefault 才能触发 drop（Chromium 规范）
-let _dragDepth = 0;
-
-document.addEventListener('dragenter', (e) => {
-  e.preventDefault();
-  _dragDepth++;
-  if (dropzone.classList.contains('hidden')) {
-    document.body.classList.add('drag-over-body');
-  } else {
-    dropzone.classList.add('drag-over');
-  }
-});
-
-document.addEventListener('dragover', (e) => {
-  e.preventDefault();
-  e.dataTransfer.dropEffect = 'copy';
-});
-
-document.addEventListener('dragleave', (e) => {
-  e.preventDefault();
-  _dragDepth--;
-  if (_dragDepth <= 0) {
-    _dragDepth = 0;
-    dropzone.classList.remove('drag-over');
-    document.body.classList.remove('drag-over-body');
-  }
-});
-
-// 全局 drop：无论当前处于哪个 UI 状态都能接收文件夹
-document.addEventListener('drop', (e) => {
-  e.preventDefault();
-  _dragDepth = 0;
-  dropzone.classList.remove('drag-over');
-  document.body.classList.remove('drag-over-body');
-
-  if (state.running) return; // 处理中不接受新文件夹
-
-  const folderPath = getFolderPathFromDrop(e);
-  if (folderPath) setFolder(folderPath);
-});
-
 // 点击选择
 dropzone.addEventListener('click', async () => {
   const folderPath = await window.vadCut.openFolder();
@@ -409,7 +369,22 @@ btnOpenOutput.addEventListener('click', () => {
 // 清空日志
 btnClearLog.addEventListener('click', () => { logPanel.innerHTML = ''; });
 
-// 处理拖拽文件夹启动（从bat传入的文件夹参数）
-window.vadCut.on('init:folder', (folderPath) => {
-  if (folderPath) setFolder(folderPath);
+// 主题切换（单击直接 toggle）
+$('#btn-theme').addEventListener('click', () => {
+  const cur = document.documentElement.getAttribute('data-theme') || 'dark';
+  applyTheme(cur === 'dark' ? 'light' : 'dark');
+});
+// 初始化
+applyTheme(localStorage.getItem('vadcut-theme') || 'dark');
+
+// 窗口控制
+$('#btn-win-min').addEventListener('click', () => window.vadCut.windowMinimize());
+$('#btn-win-max').addEventListener('click', () => window.vadCut.windowMaximize());
+$('#btn-win-close').addEventListener('click', () => window.vadCut.windowClose());
+
+// 最大化状态图标切换
+const SVG_MAXIMIZE = `<rect x="0.5" y="0.5" width="9" height="9" fill="none" stroke="currentColor" stroke-width="1"/>`;
+const SVG_RESTORE  = `<rect x="2" y="0" width="8" height="8" fill="none" stroke="currentColor" stroke-width="1"/><rect x="0" y="2" width="8" height="8" fill="var(--bg-card)" stroke="currentColor" stroke-width="1"/>`;
+window.vadCut.on('window:maximized', (isMax) => {
+  $('#btn-win-max').querySelector('svg').innerHTML = isMax ? SVG_RESTORE : SVG_MAXIMIZE;
 });

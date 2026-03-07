@@ -24,7 +24,9 @@ function createWindow() {
     ...(fs.existsSync(path.join(__dirname, '..', 'renderer', 'icon.png'))
       ? { icon: path.join(__dirname, '..', 'renderer', 'icon.png') }
       : {}),
-    backgroundColor: '#1a1a2e',
+    backgroundColor: '#00000000',
+    frame: false,
+    transparent: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -33,8 +35,14 @@ function createWindow() {
     // 隐藏菜单栏
     autoHideMenuBar: true,
   });
-
   mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
+
+  mainWindow.on('maximize', () => {
+    mainWindow?.webContents.send('window:maximized', true);
+  });
+  mainWindow.on('unmaximize', () => {
+    mainWindow?.webContents.send('window:maximized', false);
+  });
 
   mainWindow.on('closed', () => {
     mainWindow = null;
@@ -43,18 +51,6 @@ function createWindow() {
 
 app.whenReady().then(() => {
   createWindow();
-
-  // 处理拖拽文件夹启动（bat传参）
-  const args = process.argv.slice(app.isPackaged ? 1 : 2);
-  const folderArg = args.find(a => {
-    try { return fs.statSync(a).isDirectory(); } catch { return false; }
-  });
-  if (folderArg) {
-    // 等待渲染进程准备好再发送
-    mainWindow.webContents.once('did-finish-load', () => {
-      mainWindow.webContents.send('init:folder', folderArg);
-    });
-  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -143,3 +139,13 @@ ipcMain.handle('process:cancel', () => {
   cancelSignal.cancelled = true;
   return { ok: true };
 });
+
+/**
+ * 自定义窗口控制
+ */
+ipcMain.on('window:minimize', () => mainWindow?.minimize());
+ipcMain.on('window:maximize', () => {
+  if (mainWindow?.isMaximized()) mainWindow.unmaximize();
+  else mainWindow?.maximize();
+});
+ipcMain.on('window:close', () => mainWindow?.close());
