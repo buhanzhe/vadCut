@@ -10,7 +10,7 @@ contextBridge.exposeInMainWorld('vadCut', {
   shellOpenFolder: (folderPath) => ipcRenderer.invoke('shell:openFolder', folderPath),
 
   // 开始处理
-  startProcess: (folderPath) => ipcRenderer.invoke('process:start', folderPath),
+  startProcess: (folderPath, options) => ipcRenderer.invoke('process:start', folderPath, options),
 
   // 取消处理
   cancelProcess: () => ipcRenderer.invoke('process:cancel'),

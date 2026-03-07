@@ -54,7 +54,7 @@ function scanVideoFiles(folderPath) {
  *   onStage(stage, pct)  - 当前阶段与进度 (0-100)
  * @returns {Promise<object>} result
  */
-async function processVideo(videoPath, outputDir, callbacks = {}) {
+async function processVideo(videoPath, outputDir, callbacks = {}, options = {}) {
   const { onLog = () => {}, onStage = () => {} } = callbacks;
   const t0 = Date.now();
 
@@ -122,13 +122,15 @@ async function processVideo(videoPath, outputDir, callbacks = {}) {
     onLog(`输出: ${path.basename(outputPath)}`);
 
     // 5. ASR 字幕（VAD + SenseVoice）
-    onStage('asr', 0);
-    try {
-      await transcribeVideo(outputPath, (msg) => onLog(msg));
-    } catch (asrErr) {
-      onLog(`ASR 跳过: ${asrErr.message}`);
+    if (options.generateSubtitle) {
+      onStage('asr', 0);
+      try {
+        await transcribeVideo(outputPath, (msg) => onLog(msg));
+      } catch (asrErr) {
+        onLog(`ASR 跳过: ${asrErr.message}`);
+      }
+      onStage('asr', 100);
     }
-    onStage('asr', 100);
 
     onLog(`耗时: ${formatElapsed(Date.now() - t0)}`);
 
@@ -193,7 +195,7 @@ async function calcConcurrency() {
  *   onAllDone(summary)                 - 全部完成
  * @param {object} [signal]  { cancelled: boolean }
  */
-async function processFolder(folderPath, callbacks = {}, signal = { cancelled: false }) {
+async function processFolder(folderPath, callbacks = {}, signal = { cancelled: false }, options = {}) {
   const {
     onScan = () => {},
     onFileStart = () => {},
@@ -258,7 +260,7 @@ async function processFolder(folderPath, callbacks = {}, signal = { cancelled: f
         processVideo(videoPath, outputDir, {
           onLog: (msg) => onFileLog(i, msg),
           onStage: (stage, pct) => onFileStage(i, stage, pct),
-        })
+        }, options)
           .then((result) => { results[i] = { ok: true, result }; })
           .catch((err) => { results[i] = { ok: false, err }; })
           .finally(() => {

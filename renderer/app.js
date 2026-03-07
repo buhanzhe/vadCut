@@ -26,6 +26,7 @@ const btnChange         = $('#btn-change');
 const btnStart          = $('#btn-start');
 const btnCancel         = $('#btn-cancel');
 const btnOpenOutput     = $('#btn-open-output');
+const chkAsr            = $('#chk-asr');
 const overallProgress   = $('#overall-progress');
 const progressLabel     = $('#progress-label');
 const progressCount     = $('#progress-count');
@@ -189,7 +190,7 @@ function startProcessing() {
   // 注册 IPC 事件
   registerIPCListeners();
 
-  window.vadCut.startProcess(state.folderPath);
+  window.vadCut.startProcess(state.folderPath, { generateSubtitle: chkAsr.checked });
 }
 
 // ── IPC Event Listeners ────────────────────────────────────────────────────

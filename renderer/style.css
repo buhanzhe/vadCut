@@ -119,6 +119,8 @@ main {
   flex: 1;
 }
 .toolbar-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.checkbox-label { display: inline-flex; align-items: center; gap: 5px; font-size: 13px; color: var(--fg-muted); cursor: pointer; user-select: none; }
+.checkbox-label input[type="checkbox"] { cursor: pointer; width: 14px; height: 14px; accent-color: var(--accent); }
 
 /* ── Buttons ──────────────────────────────────────────────── */
 .btn {

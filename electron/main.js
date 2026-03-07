@@ -91,7 +91,7 @@ ipcMain.handle('shell:openFolder', async (_event, folderPath) => {
 /**
  * 开始处理文件夹
  */
-ipcMain.handle('process:start', async (_event, folderPath) => {
+ipcMain.handle('process:start', async (_event, folderPath, options = {}) => {
   if (!folderPath || !fs.existsSync(folderPath)) {
     return { error: '文件夹路径无效' };
   }
@@ -126,7 +126,8 @@ ipcMain.handle('process:start', async (_event, folderPath) => {
           mainWindow?.webContents.send('process:allDone', summary);
         },
       },
-      cancelSignal
+      cancelSignal,
+      options
     );
   } catch (err) {
     mainWindow?.webContents.send('process:allDone', { error: err.message });
