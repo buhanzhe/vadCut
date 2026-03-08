@@ -280,9 +280,8 @@ async function trimVideo(inputPath, outputPath, startTime, endTime, totalDuratio
     cmd
       .on('error', (err) => {
         if (fs.existsSync(tmpOut)) try { fs.unlinkSync(tmpOut); } catch (_) {}
-        // GPU 编码失败时降级到 CPU 重试
         if (gpuEnc) {
-          _encoderCache = null; // 禁用该 GPU，后续文件也走 CPU
+          _encoderCache = null;
           trimVideo(inputPath, outputPath, startTime, endTime, totalDuration, onProgress)
             .then(resolve).catch(reject);
         } else {

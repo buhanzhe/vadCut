@@ -4,14 +4,7 @@ const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
-// 防止 Electron 在 packaged app 中找不到 native 模块
-// sherpa-onnx / ffmpeg-static 需要从 app root 解析
-if (app.isPackaged) {
-  process.chdir(path.dirname(app.getPath('exe')));
-}
-
 let mainWindow = null;
-// 用于取消正在进行的处理
 let cancelSignal = { cancelled: false };
 
 function createWindow() {
@@ -32,26 +25,17 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
     },
-    // 隐藏菜单栏
     autoHideMenuBar: true,
   });
   mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
 
-  mainWindow.on('maximize', () => {
-    mainWindow?.webContents.send('window:maximized', true);
-  });
-  mainWindow.on('unmaximize', () => {
-    mainWindow?.webContents.send('window:maximized', false);
-  });
-
-  mainWindow.on('closed', () => {
-    mainWindow = null;
-  });
+  mainWindow.on('maximize',   () => mainWindow?.webContents.send('window:maximized', true));
+  mainWindow.on('unmaximize', () => mainWindow?.webContents.send('window:maximized', false));
+  mainWindow.on('closed', () => { mainWindow = null; });
 }
 
 app.whenReady().then(() => {
   createWindow();
-
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
@@ -63,9 +47,6 @@ app.on('window-all-closed', () => {
 
 // ─── IPC Handlers ──────────────────────────────────────────────────────────
 
-/**
- * 打开文件夹选择对话框
- */
 ipcMain.handle('dialog:openFolder', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     title: '选择视频文件夹',
@@ -75,52 +56,27 @@ ipcMain.handle('dialog:openFolder', async () => {
   return result.filePaths[0];
 });
 
-/**
- * 用资源管理器打开文件夹
- */
 ipcMain.handle('shell:openFolder', async (_event, folderPath) => {
-  if (fs.existsSync(folderPath)) {
-    shell.openPath(folderPath);
-  }
+  if (fs.existsSync(folderPath)) shell.openPath(folderPath);
 });
 
-/**
- * 开始处理文件夹
- */
 ipcMain.handle('process:start', async (_event, folderPath, options = {}) => {
-  if (!folderPath || !fs.existsSync(folderPath)) {
-    return { error: '文件夹路径无效' };
-  }
+  if (!folderPath || !fs.existsSync(folderPath)) return { error: '文件夹路径无效' };
 
   cancelSignal = { cancelled: false };
-
   const { processFolder } = require('../src/processor');
 
   try {
     await processFolder(
       folderPath,
       {
-        onScan(files) {
-          mainWindow?.webContents.send('process:scan', files);
-        },
-        onFileStart(index, filePath) {
-          mainWindow?.webContents.send('process:fileStart', { index, filePath });
-        },
-        onFileLog(index, msg) {
-          mainWindow?.webContents.send('process:fileLog', { index, msg });
-        },
-        onFileStage(index, stage, pct) {
-          mainWindow?.webContents.send('process:fileStage', { index, stage, pct });
-        },
-        onFileDone(index, result) {
-          mainWindow?.webContents.send('process:fileDone', { index, result });
-        },
-        onFileError(index, errMsg) {
-          mainWindow?.webContents.send('process:fileError', { index, errMsg });
-        },
-        onAllDone(summary) {
-          mainWindow?.webContents.send('process:allDone', summary);
-        },
+        onScan(files)              { mainWindow?.webContents.send('process:scan', files); },
+        onFileStart(index, filePath) { mainWindow?.webContents.send('process:fileStart', { index, filePath }); },
+        onFileLog(index, msg)      { mainWindow?.webContents.send('process:fileLog', { index, msg }); },
+        onFileStage(index, stage, pct) { mainWindow?.webContents.send('process:fileStage', { index, stage, pct }); },
+        onFileDone(index, result)  { mainWindow?.webContents.send('process:fileDone', { index, result }); },
+        onFileError(index, errMsg) { mainWindow?.webContents.send('process:fileError', { index, errMsg }); },
+        onAllDone(summary)         { mainWindow?.webContents.send('process:allDone', summary); },
       },
       cancelSignal,
       options
@@ -132,17 +88,11 @@ ipcMain.handle('process:start', async (_event, folderPath, options = {}) => {
   return { ok: true };
 });
 
-/**
- * 取消处理
- */
 ipcMain.handle('process:cancel', () => {
   cancelSignal.cancelled = true;
   return { ok: true };
 });
 
-/**
- * 自定义窗口控制
- */
 ipcMain.on('window:minimize', () => mainWindow?.minimize());
 ipcMain.on('window:maximize', () => {
   if (mainWindow?.isMaximized()) mainWindow.unmaximize();

@@ -160,9 +160,22 @@ async function transcribeVideo(videoPath, onLog = () => {}) {
     const totalSec = samples.length / 16000;
     onLog(`音频时长: ${totalSec.toFixed(1)}s`);
 
-    // 3. VAD（使用包内默认配置，silero_vad.onnx 已嵌入 .data，无需指定路径）
+    // 3. VAD（与 vad.js 保持一致：threshold=0.9, minSilence=0.1s）
     onLog('VAD 分句...');
-    const vad = createVad(M);  // 包默认配置：threshold=0.5, minSilence=0.5s, maxSpeech=20s
+    const vad = createVad(M, {
+      sileroVad: {
+        model: './silero_vad.onnx',
+        threshold: 0.9,
+        minSilenceDuration: 0.1,
+        minSpeechDuration: 0.25,
+        maxSpeechDuration: 20,
+        windowSize: 512,
+      },
+      sampleRate: 16000,
+      numThreads: 1,
+      provider: 'cpu',
+      debug: 0,
+    });
 
     const WIN = 512;
     for (let i = 0; i < samples.length; i += WIN) {

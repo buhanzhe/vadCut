@@ -50,17 +50,23 @@ html, body {
 }
 
 /* ── Layout ───────────────────────────────────────────────── */
-body { display: flex; flex-direction: column; }
+body {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  padding: 8px;
+  box-sizing: border-box;
+}
 
 /* 圆角窗口容器 */
 #app-frame {
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  flex: 1;
   background: var(--bg);
   border-radius: 12px;
   overflow: hidden;
-  box-shadow: 0 8px 40px rgba(0,0,0,.7), 0 0 0 1px rgba(255,255,255,.08);
+  box-shadow: 0 2px 6px rgba(0,0,0,.45), 0 0 0 1px rgba(255,255,255,.08);
 }
 
 .titlebar {
@@ -373,3 +379,4 @@ main {
   animation: spin .7s linear infinite;
   flex-shrink: 0;
 }
+
