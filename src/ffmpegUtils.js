@@ -250,9 +250,9 @@ async function trimVideo(inputPath, outputPath, startTime, endTime, totalDuratio
       cmd.videoCodec(gpuEnc.encoder);
       cmd.outputOptions([
         ...gpuEnc.extraOpts,
-        '-b:v', '2500k',
-        '-maxrate', '2500k',
-        '-bufsize', '5000k',
+        '-b:v', '1500k',
+        '-maxrate', '1500k',
+        '-bufsize', '3000k',
         '-r', '24',
         '-movflags', '+faststart',
       ]);
@@ -261,9 +261,9 @@ async function trimVideo(inputPath, outputPath, startTime, endTime, totalDuratio
       cmd.videoCodec('libx264');
       cmd.outputOptions([
         '-preset', 'fast',
-        '-b:v', '2500k',
-        '-maxrate', '2500k',
-        '-bufsize', '5000k',
+        '-b:v', '1500k',
+        '-maxrate', '1500k',
+        '-bufsize', '3000k',
         '-r', '24',
         '-movflags', '+faststart',
       ]);
