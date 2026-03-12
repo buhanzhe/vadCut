@@ -37,12 +37,19 @@ function moveFile(src, dest) {
   try {
     fs.renameSync(src, dest);
   } catch (e) {
-    if (e.code === 'EXDEV') {
+    if (e.code !== 'EXDEV' && e.code !== 'UNKNOWN') throw e;
+    // 跨盘或 Windows UNKNOWN 错误：尝试 copy
+    try {
       fs.copyFileSync(src, dest);
-      fs.unlinkSync(src);
-    } else {
-      throw e;
+    } catch (copyErr) {
+      // copy 报错时检查目标文件是否已写入成功
+      const srcSize = fs.statSync(src).size;
+      let destSize = 0;
+      try { destSize = fs.statSync(dest).size; } catch (_) {}
+      if (destSize !== srcSize) throw copyErr;
     }
+    // 删除临时文件，失败不影响结果
+    try { fs.unlinkSync(src); } catch (_) {}
   }
 }
 
