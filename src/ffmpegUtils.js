@@ -36,21 +36,75 @@ function makeTempPath(ext) {
 function moveFile(src, dest) {
   try {
     fs.renameSync(src, dest);
+    return;
   } catch (e) {
     if (e.code !== 'EXDEV' && e.code !== 'UNKNOWN') throw e;
-    // 跨盘或 Windows UNKNOWN 错误：尝试 copy
-    try {
-      fs.copyFileSync(src, dest);
-    } catch (copyErr) {
-      // copy 报错时检查目标文件是否已写入成功
-      const srcSize = fs.statSync(src).size;
-      let destSize = 0;
-      try { destSize = fs.statSync(dest).size; } catch (_) {}
-      if (destSize !== srcSize) throw copyErr;
-    }
-    // 删除临时文件，失败不影响结果
-    try { fs.unlinkSync(src); } catch (_) {}
   }
+
+  // 跨盘或 Windows UNKNOWN 错误：使用流式复制（更稳定）
+  const srcSize = fs.statSync(src).size;
+
+  // 先尝试同步复制
+  let copySuccess = false;
+  try {
+    fs.copyFileSync(src, dest);
+    copySuccess = true;
+  } catch (syncErr) {
+    // 同步复制失败，检查是否部分写入
+    try {
+      const destSize = fs.statSync(dest).size;
+      if (destSize === srcSize) copySuccess = true;
+    } catch (_) {}
+  }
+
+  // 验证目标文件完整性
+  if (copySuccess) {
+    try {
+      const destSize = fs.statSync(dest).size;
+      if (destSize !== srcSize) {
+        throw new Error(`文件大小不匹配: 源=${srcSize}, 目标=${destSize}`);
+      }
+      // 验证可读性（尝试打开文件）
+      const fd = fs.openSync(dest, 'r');
+      fs.closeSync(fd);
+      // 删除临时文件
+      try { fs.unlinkSync(src); } catch (_) {}
+      return;
+    } catch (verifyErr) {
+      // 验证失败，删除损坏的目标文件
+      try { fs.unlinkSync(dest); } catch (_) {}
+    }
+  }
+
+  // 回退：使用流式复制（同步等待）
+  return new Promise((resolve, reject) => {
+    const srcStream = fs.createReadStream(src);
+    const destStream = fs.createWriteStream(dest);
+
+    destStream.on('finish', () => {
+      // 等待文件系统刷新
+      setTimeout(() => {
+        try {
+          const destSize = fs.statSync(dest).size;
+          if (destSize !== srcSize) {
+            throw new Error(`流式复制后大小不匹配: 源=${srcSize}, 目标=${destSize}`);
+          }
+          // 验证可读��
+          const fd = fs.openSync(dest, 'r');
+          fs.closeSync(fd);
+          // 删除临时文件
+          try { fs.unlinkSync(src); } catch (_) {}
+          resolve();
+        } catch (err) {
+          reject(err);
+        }
+      }, 200);
+    });
+
+    destStream.on('error', reject);
+    srcStream.on('error', reject);
+    srcStream.pipe(destStream);
+  });
 }
 
 // ─── GPU 编码器探测 ──────────────────────────────────────────────────────────
@@ -196,8 +250,14 @@ function extractAudioWav(videoPath, wavPath, onProgress) {
         if (fs.existsSync(tmpOut)) try { fs.unlinkSync(tmpOut); } catch (_) {}
         reject(err);
       })
-      .on('end', () => {
-        try { moveFile(tmpOut, wavPath); resolve(); } catch (e) { reject(e); }
+      .on('end', async () => {
+        try {
+          const result = moveFile(tmpOut, wavPath);
+          if (result && result.then) await result;
+          resolve();
+        } catch (e) {
+          reject(e);
+        }
       })
       .run();
   });
@@ -295,8 +355,14 @@ async function trimVideo(inputPath, outputPath, startTime, endTime, totalDuratio
           reject(err);
         }
       })
-      .on('end', () => {
-        try { moveFile(tmpOut, outputPath); resolve(); } catch (e) { reject(e); }
+      .on('end', async () => {
+        try {
+          const result = moveFile(tmpOut, outputPath);
+          if (result && result.then) await result;
+          resolve();
+        } catch (e) {
+          reject(e);
+        }
       })
       .run();
   });
