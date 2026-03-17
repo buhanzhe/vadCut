@@ -97,9 +97,29 @@ async function processVideo(videoPath, outputDir, callbacks = {}, options = {}) 
     // 3. VAD
     onLog('VAD 语音边界检测...');
     onStage('vad', 0);
-    const { firstSpeechTime, lastSpeechTime, segments } = detectSpeechBounds(wavPath);
+    const {
+      firstSpeechTime,
+      lastSpeechTime,
+      segments,
+      effectiveSegments,
+      ignoredLeadingSegments,
+      ignoredTrailingSegments,
+      minEdgeSpeechDuration,
+      edgeFilterFallback,
+    } = detectSpeechBounds(wavPath, {
+      minEdgeSpeechDuration: 1.0,
+    });
     onStage('vad', 100);
     onLog(`检测到 ${segments.length} 个语音片段`);
+    const edgeMinLabel = Number(minEdgeSpeechDuration).toFixed(1).replace(/\.0$/, '');
+    if (edgeFilterFallback) {
+      onLog(`首尾过滤(<${edgeMinLabel}s)后无有效片段，已回退到原始语音边界`);
+    } else if (ignoredLeadingSegments > 0 || ignoredTrailingSegments > 0) {
+      onLog(`首尾过滤(<${edgeMinLabel}s)：忽略开头 ${ignoredLeadingSegments} 个、结尾 ${ignoredTrailingSegments} 个片段`);
+    }
+    if (effectiveSegments.length !== segments.length) {
+      onLog(`用于剪辑边界的语音片段: ${effectiveSegments.length} 个`);
+    }
     onLog(`语音起始: ${formatTime(firstSpeechTime)}  结束: ${formatTime(lastSpeechTime)}`);
 
     const headCut = Math.max(0, firstSpeechTime - 0.5);

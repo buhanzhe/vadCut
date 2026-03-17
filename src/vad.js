@@ -44,7 +44,17 @@ function readWavSamples(wavPath) {
  * 检测音频文件中语音的起止时间
  * @param {string} wavPath - 16kHz 单声道 WAV 文件路径
  * @param {object} opts - 选项
- * @returns {{ firstSpeechTime: number, lastSpeechTime: number, totalDuration: number }}
+ * @returns {{
+ *   firstSpeechTime: number,
+ *   lastSpeechTime: number,
+ *   totalDuration: number,
+ *   segments: Array<{ start: number, end: number }>,
+ *   effectiveSegments: Array<{ start: number, end: number }>,
+ *   ignoredLeadingSegments: number,
+ *   ignoredTrailingSegments: number,
+ *   minEdgeSpeechDuration: number,
+ *   edgeFilterFallback: boolean
+ * }}
  *   firstSpeechTime: 第一个语音片段开始时间（秒）
  *   lastSpeechTime:  最后一个语音片段结束时间（秒）
  *   totalDuration:   音频总时长（秒）
@@ -103,17 +113,56 @@ function detectSpeechBounds(wavPath, opts = {}) {
       lastSpeechTime: totalDuration,
       totalDuration,
       segments: [],
+      effectiveSegments: [],
+      ignoredLeadingSegments: 0,
+      ignoredTrailingSegments: 0,
+      minEdgeSpeechDuration: 0,
+      edgeFilterFallback: false,
     };
   }
 
-  const firstSpeechTime = segments[0].start;
-  const lastSpeechTime = segments[segments.length - 1].end;
+  // 仅在首尾应用过滤：忽略开头/结尾时长过短的语音段（默认 <1s）
+  const minEdgeSpeechDuration = Number.isFinite(opts.minEdgeSpeechDuration)
+    ? Math.max(0, opts.minEdgeSpeechDuration)
+    : 1.0;
+  const getDuration = (seg) => Math.max(0, seg.end - seg.start);
+
+  let startIdx = 0;
+  let endIdx = segments.length - 1;
+
+  while (startIdx <= endIdx && getDuration(segments[startIdx]) < minEdgeSpeechDuration) {
+    startIdx += 1;
+  }
+  while (endIdx >= startIdx && getDuration(segments[endIdx]) < minEdgeSpeechDuration) {
+    endIdx -= 1;
+  }
+
+  let ignoredLeadingSegments = startIdx;
+  let ignoredTrailingSegments = segments.length - 1 - endIdx;
+  let edgeFilterFallback = false;
+  let effectiveSegments = segments.slice(startIdx, endIdx + 1);
+
+  // 极端情况：全部语音段都低于阈值时，回退到原始边界，避免剪辑区间失真
+  if (effectiveSegments.length === 0) {
+    ignoredLeadingSegments = 0;
+    ignoredTrailingSegments = 0;
+    edgeFilterFallback = true;
+    effectiveSegments = segments;
+  }
+
+  const firstSpeechTime = effectiveSegments[0].start;
+  const lastSpeechTime = effectiveSegments[effectiveSegments.length - 1].end;
 
   return {
     firstSpeechTime,
     lastSpeechTime,
     totalDuration,
     segments,
+    effectiveSegments,
+    ignoredLeadingSegments,
+    ignoredTrailingSegments,
+    minEdgeSpeechDuration,
+    edgeFilterFallback,
   };
 }
 
