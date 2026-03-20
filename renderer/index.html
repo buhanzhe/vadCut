@@ -56,79 +56,153 @@
     </div>
   </header>
 
-  <main>
-    <!-- 拖拽 / 选择文件夹区域 -->
-    <section id="dropzone" class="dropzone" role="button" tabindex="0"
-             aria-label="拖拽文件夹到此处或点击选择">
-      <div class="dropzone-inner">
-        <svg class="drop-icon" width="56" height="56" viewBox="0 0 24 24" fill="none"
-             stroke="currentColor" stroke-width="1.5">
-          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
-          <line x1="12" y1="11" x2="12" y2="17"/>
-          <polyline points="9 14 12 11 15 14"/>
-        </svg>
-        <p class="drop-hint">点击选择视频文件夹</p>
-        <p class="drop-sub">选择后自动开始扫描</p>
-      </div>
-    </section>
+  <main id="content-body">
+    <aside id="sidebar" aria-label="功能切换">
+      <button class="tab-item active" type="button" data-tab="clip" aria-controls="panel-clip">
+        <span class="tab-item-text">剪辑</span>
+      </button>
+      <button class="tab-item" type="button" data-tab="subtitle" aria-controls="panel-subtitle">
+        <span class="tab-item-text">提取字幕</span>
+      </button>
+    </aside>
 
-    <!-- 已选文件夹信息 + 操作按钮 -->
-    <section id="toolbar" class="toolbar hidden">
-      <div class="folder-info">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
-        </svg>
-        <span id="folder-path" class="folder-path"></span>
-        <button id="btn-change" class="btn btn-ghost btn-sm" title="更换文件夹">更换</button>
-      </div>
-      <div class="toolbar-actions">
-        <label class="checkbox-label" title="使用 SenseVoice 生成字幕（会延长处理时间）">
-          <input type="checkbox" id="chk-asr">
-          生成字幕
-        </label>
-        <button id="btn-start" class="btn btn-primary">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-          开始剪辑
-        </button>
-        <button id="btn-cancel" class="btn btn-danger hidden">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+    <section id="panel-clip" class="tab-panel">
+      <!-- 拖拽 / 选择文件夹区域 -->
+      <section id="dropzone" class="dropzone" role="button" tabindex="0"
+               aria-label="拖拽文件夹到此处或点击选择">
+        <div class="dropzone-inner">
+          <svg class="drop-icon" width="56" height="56" viewBox="0 0 24 24" fill="none"
+               stroke="currentColor" stroke-width="1.5">
+            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+            <line x1="12" y1="11" x2="12" y2="17"/>
+            <polyline points="9 14 12 11 15 14"/>
           </svg>
-          取消
-        </button>
-        <button id="btn-open-output" class="btn btn-ghost hidden">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
-            <polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+          <p class="drop-hint">点击选择视频文件夹</p>
+          <p class="drop-sub">选择后自动开始扫描</p>
+        </div>
+      </section>
+
+      <!-- 已选文件夹信息 + 操作按钮 -->
+      <section id="toolbar" class="toolbar hidden">
+        <div class="folder-info">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
           </svg>
-          打开输出目录
-        </button>
-      </div>
+          <span id="folder-path" class="folder-path"></span>
+          <button id="btn-change" class="btn btn-ghost btn-sm" title="更换文件夹">更换</button>
+        </div>
+        <div class="toolbar-actions">
+          <button id="btn-start" class="btn btn-primary">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            开始剪辑
+          </button>
+          <button id="btn-cancel" class="btn btn-danger hidden">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+            取消
+          </button>
+          <button id="btn-open-output" class="btn btn-ghost hidden">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+              <polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+            </svg>
+            打开输出目录
+          </button>
+        </div>
+      </section>
+
+      <!-- 整体进度 -->
+      <section id="overall-progress" class="overall-progress hidden">
+        <div class="progress-header">
+          <span id="progress-label">处理中...</span>
+          <span id="progress-count"></span>
+        </div>
+        <div class="progress-track">
+          <div id="progress-bar" class="progress-bar" style="width:0%"></div>
+        </div>
+      </section>
+
+      <!-- 文件列表 -->
+      <section id="file-list-section" class="file-list-section hidden">
+        <div id="file-list" class="file-list"></div>
+      </section>
+
+      <!-- 日志面板 -->
+      <section id="log-section" class="log-section hidden">
+        <div class="log-header">
+          <span>运行日志</span>
+          <button id="btn-clear-log" class="btn btn-ghost btn-sm">清空</button>
+        </div>
+        <div id="log-panel" class="log-panel"></div>
+      </section>
     </section>
 
-    <!-- 整体进度 -->
-    <section id="overall-progress" class="overall-progress hidden">
-      <div class="progress-header">
-        <span id="progress-label">处理中...</span>
-        <span id="progress-count"></span>
-      </div>
-      <div class="progress-track">
-        <div id="progress-bar" class="progress-bar" style="width:0%"></div>
-      </div>
-    </section>
+    <section id="panel-subtitle" class="tab-panel hidden">
+      <section id="sub-dropzone" class="dropzone" role="button" tabindex="0"
+               aria-label="拖拽文件夹到此处或点击选择">
+        <div class="dropzone-inner">
+          <svg class="drop-icon" width="56" height="56" viewBox="0 0 24 24" fill="none"
+               stroke="currentColor" stroke-width="1.5">
+            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+            <line x1="12" y1="11" x2="12" y2="17"/>
+            <polyline points="9 14 12 11 15 14"/>
+          </svg>
+          <p class="drop-hint">点击选择视频文件夹</p>
+          <p class="drop-sub">为原始视频提取字幕，不剪辑视频</p>
+        </div>
+      </section>
 
-    <!-- 文件列表 -->
-    <section id="file-list-section" class="file-list-section hidden">
-      <div id="file-list" class="file-list"></div>
-    </section>
+      <section id="sub-toolbar" class="toolbar hidden">
+        <div class="folder-info">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+          </svg>
+          <span id="sub-folder-path" class="folder-path"></span>
+          <button id="sub-btn-change" class="btn btn-ghost btn-sm" title="更换文件夹">更换</button>
+        </div>
+        <div class="toolbar-actions">
+          <button id="sub-btn-start" class="btn btn-primary">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            开始提取字幕
+          </button>
+          <button id="sub-btn-cancel" class="btn btn-danger hidden">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+            取消
+          </button>
+          <button id="sub-btn-open-output" class="btn btn-ghost hidden">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+              <polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+            </svg>
+            打开所在目录
+          </button>
+        </div>
+      </section>
 
-    <!-- 日志面板 -->
-    <section id="log-section" class="log-section hidden">
-      <div class="log-header">
-        <span>运行日志</span>
-        <button id="btn-clear-log" class="btn btn-ghost btn-sm">清空</button>
-      </div>
-      <div id="log-panel" class="log-panel"></div>
+      <section id="sub-overall-progress" class="overall-progress hidden">
+        <div class="progress-header">
+          <span id="sub-progress-label">处理中...</span>
+          <span id="sub-progress-count"></span>
+        </div>
+        <div class="progress-track">
+          <div id="sub-progress-bar" class="progress-bar" style="width:0%"></div>
+        </div>
+      </section>
+
+      <section id="sub-file-list-section" class="file-list-section hidden">
+        <div id="sub-file-list" class="file-list"></div>
+      </section>
+
+      <section id="sub-log-section" class="log-section hidden">
+        <div class="log-header">
+          <span>运行日志</span>
+          <button id="sub-btn-clear-log" class="btn btn-ghost btn-sm">清空</button>
+        </div>
+        <div id="sub-log-panel" class="log-panel"></div>
+      </section>
     </section>
   </main>
   </div><!-- #app-frame -->

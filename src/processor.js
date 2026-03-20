@@ -60,6 +60,27 @@ async function processVideo(videoPath, outputDir, callbacks = {}, options = {}) 
   const extRaw = path.extname(videoPath);           // 保留原始大小写，用于剥离
   const nameWithoutExt = path.basename(videoPath, extRaw);  // 用原始大小写剥离，避免 00108.MTS → 00108.MTS.mp4
   const outputExt = '.mp4'; // 统一输出 MP4（重编码+美化+降噪需要）
+
+  if (options.subtitleOnly) {
+    const srtPath = videoPath.replace(/\.[^.]+$/, '.srt');
+    if (fs.existsSync(srtPath)) {
+      onLog('已跳过（字幕文件已存在）');
+      return { skipped: true, subtitleOnly: true, reason: 'subtitle exists' };
+    }
+
+    onLog('提取字幕中...');
+    onStage('asr', 0);
+    const generatedSrtPath = await transcribeVideo(videoPath, (msg) => onLog(msg));
+    onStage('asr', 100);
+    onLog(`耗时: ${formatElapsed(Date.now() - t0)}`);
+
+    if (!generatedSrtPath) {
+      return { skipped: true, subtitleOnly: true, reason: 'empty subtitle', elapsed: Date.now() - t0 };
+    }
+
+    return { subtitleOnly: true, srtPath: generatedSrtPath, elapsed: Date.now() - t0 };
+  }
+
   const outputPath = path.join(outputDir, nameWithoutExt + outputExt);
 
   if (fs.existsSync(outputPath)) {
@@ -196,8 +217,8 @@ async function processFolder(folderPath, callbacks = {}, signal = { cancelled: f
     return;
   }
 
-  const outputDir = path.join(folderPath, OUTPUT_SUBDIR);
-  if (!fs.existsSync(outputDir)) {
+  const outputDir = options.subtitleOnly ? folderPath : path.join(folderPath, OUTPUT_SUBDIR);
+  if (!options.subtitleOnly && !fs.existsSync(outputDir)) {
     fs.mkdirSync(outputDir, { recursive: true });
   }
 
