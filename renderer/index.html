@@ -162,6 +162,10 @@
           <button id="sub-btn-change" class="btn btn-ghost btn-sm" title="更换文件夹">更换</button>
         </div>
         <div class="toolbar-actions">
+          <label class="toolbar-select" for="sub-scheme-select">
+            <span class="toolbar-select-label">字幕方案</span>
+            <select id="sub-scheme-select" class="toolbar-select-input"></select>
+          </label>
           <button id="sub-btn-start" class="btn btn-primary">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
             开始提取字幕
@@ -206,6 +210,25 @@
     </section>
   </main>
   </div><!-- #app-frame -->
+
+  <section id="scheme-modal" class="engine-modal hidden" role="dialog" aria-modal="true" aria-labelledby="scheme-modal-title">
+    <div class="engine-modal-card">
+      <h2 id="scheme-modal-title">下载字幕模型</h2>
+      <p id="scheme-modal-desc" class="engine-modal-desc"></p>
+
+      <div id="scheme-modal-progress" class="engine-progress-wrap hidden">
+        <div class="engine-progress-track">
+          <div id="scheme-modal-progress-bar" class="engine-progress-bar" style="width:0%"></div>
+        </div>
+        <div id="scheme-modal-progress-text" class="engine-progress-text">等待下载</div>
+      </div>
+
+      <div class="engine-modal-actions">
+        <button id="scheme-modal-secondary" class="btn btn-ghost">关闭</button>
+        <button id="scheme-modal-primary" class="btn btn-primary">立即下载</button>
+      </div>
+    </div>
+  </section>
 
   <script src="app.js"></script>
 </body>

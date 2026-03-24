@@ -10,6 +10,7 @@ const { getVideoMetadata, extractAudioWav, trimVideo, getEncoderInfo, makeTempPa
 
 const { detectSpeechBounds } = require('./vad');
 const { transcribeVideo } = require('./asr');
+const { resolveSubtitleSchemeInfo } = require('./asrEngine');
 
 const VIDEO_EXTENSIONS = new Set([
   '.mp4', '.mkv', '.avi', '.mov', '.mts', '.m2ts', '.ts',
@@ -56,6 +57,7 @@ function scanVideoFiles(folderPath) {
 async function processVideo(videoPath, outputDir, callbacks = {}, options = {}) {
   const { onLog = () => {}, onStage = () => {} } = callbacks;
   const t0 = Date.now();
+  const subtitleScheme = resolveSubtitleSchemeInfo(options.subtitleScheme);
 
   const extRaw = path.extname(videoPath);           // 保留原始大小写，用于剥离
   const nameWithoutExt = path.basename(videoPath, extRaw);  // 用原始大小写剥离，避免 00108.MTS → 00108.MTS.mp4
@@ -65,20 +67,43 @@ async function processVideo(videoPath, outputDir, callbacks = {}, options = {}) 
     const srtPath = videoPath.replace(/\.[^.]+$/, '.srt');
     if (fs.existsSync(srtPath)) {
       onLog('已跳过（字幕文件已存在）');
-      return { skipped: true, subtitleOnly: true, reason: 'subtitle exists' };
+      return {
+        skipped: true,
+        subtitleOnly: true,
+        reason: 'subtitle exists',
+        subtitleSchemeId: subtitleScheme.schemeId,
+        subtitleSchemeLabel: subtitleScheme.label,
+      };
     }
 
     onLog('提取字幕中...');
     onStage('asr', 0);
-    const generatedSrtPath = await transcribeVideo(videoPath, (msg) => onLog(msg));
+    const generatedSrtPath = await transcribeVideo(
+      videoPath,
+      { schemeId: subtitleScheme.schemeId },
+      (msg) => onLog(msg)
+    );
     onStage('asr', 100);
     onLog(`耗时: ${formatElapsed(Date.now() - t0)}`);
 
     if (!generatedSrtPath) {
-      return { skipped: true, subtitleOnly: true, reason: 'empty subtitle', elapsed: Date.now() - t0 };
+      return {
+        skipped: true,
+        subtitleOnly: true,
+        reason: 'empty subtitle',
+        elapsed: Date.now() - t0,
+        subtitleSchemeId: subtitleScheme.schemeId,
+        subtitleSchemeLabel: subtitleScheme.label,
+      };
     }
 
-    return { subtitleOnly: true, srtPath: generatedSrtPath, elapsed: Date.now() - t0 };
+    return {
+      subtitleOnly: true,
+      srtPath: generatedSrtPath,
+      elapsed: Date.now() - t0,
+      subtitleSchemeId: subtitleScheme.schemeId,
+      subtitleSchemeLabel: subtitleScheme.label,
+    };
   }
 
   const outputPath = path.join(outputDir, nameWithoutExt + outputExt);
@@ -218,12 +243,16 @@ async function processFolder(folderPath, callbacks = {}, signal = { cancelled: f
   }
 
   const outputDir = options.subtitleOnly ? folderPath : path.join(folderPath, OUTPUT_SUBDIR);
+  const subtitleScheme = resolveSubtitleSchemeInfo(options.subtitleScheme);
   if (!options.subtitleOnly && !fs.existsSync(outputDir)) {
     fs.mkdirSync(outputDir, { recursive: true });
   }
 
   const concurrency = Math.min(MAX_CONCURRENCY, videoFiles.length);
   onFileLog(-1, `并发数: ${concurrency}`);
+  if (options.subtitleOnly) {
+    onFileLog(-1, `字幕方案: ${subtitleScheme.label}`);
+  }
 
   let success = 0, skipped = 0, errors = 0;
   const timings = [];
@@ -290,7 +319,16 @@ async function processFolder(folderPath, callbacks = {}, signal = { cancelled: f
     for (const l of lines) onFileLog(-1, l);
   }
 
-  onAllDone({ total: videoFiles.length, success, skipped, errors, outputDir, totalElapsed });
+  onAllDone({
+    total: videoFiles.length,
+    success,
+    skipped,
+    errors,
+    outputDir,
+    totalElapsed,
+    subtitleSchemeId: options.subtitleOnly ? subtitleScheme.schemeId : null,
+    subtitleSchemeLabel: options.subtitleOnly ? subtitleScheme.label : null,
+  });
 }
 
 module.exports = { processFolder, processVideo, scanVideoFiles, OUTPUT_SUBDIR, VIDEO_EXTENSIONS };

@@ -1,16 +1,38 @@
 /**
- * VAD 工具：使用 sherpa-onnx 检测音频中的语音片段
+ * VAD 工具：使用 sherpa-onnx-node 检测音频中的语音片段
  * 返回第一个和最后一个语音活动的时间戳，用于掐头去尾
  */
 const path = require('path');
 const fs = require('fs');
-const { app } = (() => { try { return require('electron'); } catch { return {}; } })();
+const sherpaNode = require('sherpa-onnx-node');
+const { resolveBundledModelsRoot } = require('./runtimePaths');
 
 // 打包后模型在 resources/models/，开发时在项目根 models/
-const MODEL_PATH = (app && app.isPackaged)
-  ? path.join(process.resourcesPath, 'models', 'silero_vad.onnx')
-  : path.join(__dirname, '..', 'models', 'silero_vad.onnx');
+const MODEL_PATH = path.join(resolveBundledModelsRoot(__dirname), 'silero_vad.onnx');
 const SAMPLE_RATE = 16000;
+
+function createNativeVad(opts = {}, bufferSizeInSeconds = 60) {
+  if (!fs.existsSync(MODEL_PATH)) {
+    throw new Error(
+      `VAD 模型文件不存在: ${MODEL_PATH}\n请先运行: npm run setup`
+    );
+  }
+
+  return new sherpaNode.Vad({
+    sileroVad: {
+      model: MODEL_PATH,
+      threshold: opts.threshold || 0.9,
+      minSilenceDuration: opts.minSilenceDuration || 0.1,
+      minSpeechDuration: opts.minSpeechDuration || 0.25,
+      maxSpeechDuration: opts.maxSpeechDuration || 30.0,
+      windowSize: opts.windowSize || 512,
+    },
+    sampleRate: SAMPLE_RATE,
+    numThreads: opts.numThreads || 1,
+    provider: opts.provider || 'cpu',
+    debug: opts.debug || 0,
+  }, bufferSizeInSeconds);
+}
 
 /**
  * 读取 WAV 文件，返回 Float32Array 采样数据
@@ -60,45 +82,21 @@ function readWavSamples(wavPath) {
  *   totalDuration:   音频总时长（秒）
  */
 function detectSpeechBounds(wavPath, opts = {}) {
-  if (!fs.existsSync(MODEL_PATH)) {
-    throw new Error(
-      `VAD 模型文件不存在: ${MODEL_PATH}\n请先运行: npm run setup`
-    );
-  }
-
-  const sherpa = require('sherpa-onnx');
-
-  const config = {
-    sileroVad: {
-      model: MODEL_PATH,
-      threshold: opts.threshold || 0.9,
-      minSilenceDuration: opts.minSilenceDuration || 0.1,
-      minSpeechDuration: opts.minSpeechDuration || 0.25,
-      maxSpeechDuration: opts.maxSpeechDuration || 30.0,
-      windowSize: 512,
-    },
-    sampleRate: SAMPLE_RATE,
-    numThreads: 1,
-    provider: 'cpu',
-    debug: 0,
-  };
-
-  // bufferSizeInSeconds: 缓冲区大小，60秒足够大
-  const vad = sherpa.createVad(config, 60);
-
   const samples = readWavSamples(wavPath);
   const totalDuration = samples.length / SAMPLE_RATE;
+  const vad = createNativeVad(opts, Math.max(60, Math.ceil(totalDuration) + 1));
 
   // 分块送入 VAD（512 samples = 32ms，匹配 windowSize）
-  const windowSize = 512;
+  const windowSize = opts.windowSize || 512;
   for (let i = 0; i + windowSize <= samples.length; i += windowSize) {
-    vad.acceptWaveform(samples.slice(i, i + windowSize));
+    vad.acceptWaveform(samples.subarray(i, i + windowSize));
   }
   vad.flush();
 
   const segments = [];
   while (!vad.isEmpty()) {
-    const seg = vad.front();
+    // Electron/Node 某些运行时禁用 native external buffer，显式要求拷贝到 JS buffer。
+    const seg = vad.front(false);
     // seg.start 单位是采样点数
     const startSec = seg.start / SAMPLE_RATE;
     const endSec = startSec + seg.samples.length / SAMPLE_RATE;
@@ -166,4 +164,4 @@ function detectSpeechBounds(wavPath, opts = {}) {
   };
 }
 
-module.exports = { detectSpeechBounds, MODEL_PATH, SAMPLE_RATE };
+module.exports = { detectSpeechBounds, createNativeVad, MODEL_PATH, SAMPLE_RATE };

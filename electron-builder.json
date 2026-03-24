@@ -1,32 +1,30 @@
 {
   "appId": "com.vadcut.app",
   "productName": "VAD-Cut",
+  "afterPack": "scripts/prune-electron-locales.js",
   "copyright": "Copyright © 2025",
   "asar": true,
   "asarUnpack": [
     "node_modules/ffmpeg-static/**",
-    "node_modules/sherpa-onnx/**"
+    "node_modules/sherpa-onnx-node/**",
+    "vendor/sherpa-onnx-win-x64/**"
   ],
   "files": [
     "electron/**",
     "renderer/**",
     "src/**",
+    "vendor/**",
     "node_modules/**",
     "!node_modules/electron/**",
+    "!node_modules/sherpa-onnx-win-x64/**",
     "!node_modules/.cache/**",
     "!**/*.map",
     "!**/*.md"
   ],
   "extraResources": [
     {
-      "from": "models/",
-      "to": "models/",
-      "filter": ["**/*.onnx"]
-    },
-    {
-      "from": "models/sherpa-onnx-wasm-simd-1.12.28-vad-asr-zh_en_ja_ko_cantonese-sense_voice_small/",
-      "to": "models/sherpa-onnx-wasm-simd-1.12.28-vad-asr-zh_en_ja_ko_cantonese-sense_voice_small/",
-      "filter": ["**/*.js", "**/*.wasm", "**/*.data"]
+      "from": "models/silero_vad.onnx",
+      "to": "models/silero_vad.onnx"
     }
   ],
   "directories": {
@@ -35,10 +33,15 @@
   "win": {
     "target": [
       {
-        "target": "zip",
+        "target": "nsis",
         "arch": ["x64"]
       }
     ],
     "icon": "build/icon.ico"
+  },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": false,
+    "include": "build/installer.nsh"
   }
 }
