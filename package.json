@@ -1,6 +1,6 @@
 {
   "name": "vad-cut",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "课程视频掐头去尾剪辑工具 - 基于VAD自动识别有效内容边界",
   "main": "electron/main.js",
   "scripts": {
