@@ -473,6 +473,61 @@ function buildFileStatusMessage(scheme, filePath, prefix) {
   return `${scheme.label} ${prefix}: ${filePath}`;
 }
 
+function getExpectedFileSize(file) {
+  const expectedSize = Number(file?.expectedSize || 0);
+  return Number.isFinite(expectedSize) && expectedSize > 0 ? expectedSize : 0;
+}
+
+function createDownloadProgressTracker(requiredFiles = []) {
+  const files = Array.isArray(requiredFiles) ? requiredFiles : [];
+  const observedUnknownFileTotals = new Map();
+  const knownExpectedTotalBytes = files.reduce(
+    (sum, file) => sum + getExpectedFileSize(file),
+    0
+  );
+
+  function observeFileTotal(file, bytes) {
+    if (!file || getExpectedFileSize(file) > 0) {
+      return;
+    }
+
+    const normalizedBytes = Math.round(Number(bytes) || 0);
+    if (normalizedBytes <= 0) {
+      return;
+    }
+
+    const prevBytes = observedUnknownFileTotals.get(file) || 0;
+    if (normalizedBytes > prevBytes) {
+      observedUnknownFileTotals.set(file, normalizedBytes);
+    }
+  }
+
+  function getTotalBytes() {
+    let observedUnknownTotalBytes = 0;
+    for (const bytes of observedUnknownFileTotals.values()) {
+      observedUnknownTotalBytes += bytes;
+    }
+    return knownExpectedTotalBytes + observedUnknownTotalBytes;
+  }
+
+  function getProgress(downloadedBytes) {
+    const safeDownloadedBytes = Math.max(0, Math.round(Number(downloadedBytes) || 0));
+    const totalBytes = Math.max(getTotalBytes(), safeDownloadedBytes);
+    return {
+      downloadedBytes: safeDownloadedBytes,
+      totalBytes,
+      percent: totalBytes > 0
+        ? Math.min(100, Math.round((safeDownloadedBytes / totalBytes) * 100))
+        : 0,
+    };
+  }
+
+  return {
+    observeFileTotal,
+    getProgress,
+  };
+}
+
 function createCancelledError() {
   const err = new Error('下载已取消');
   err.code = DOWNLOAD_CANCELLED_CODE;
@@ -591,19 +646,20 @@ async function downloadSubtitleScheme(
   const scheme = getSubtitleSchemeDefinition(schemeId);
   const writableSchemeDir = getWritableSchemeDir(scheme.schemeId);
   const requiredFiles = scheme.requiredFiles.filter((file) => file.required !== false);
+  const progressTracker = createDownloadProgressTracker(requiredFiles);
 
   clearSchemeFailure(scheme.schemeId);
   ensureDir(writableSchemeDir);
 
   let completedBytes = 0;
-  let overallTotalBytes = requiredFiles.reduce((sum, file) => sum + (file.expectedSize || 0), 0);
+  const initialProgress = progressTracker.getProgress(0);
 
   setSchemeDownloadState(scheme.schemeId, {
     downloading: true,
     file: '',
     percent: 0,
     downloadedBytes: 0,
-    totalBytes: overallTotalBytes,
+    totalBytes: initialProgress.totalBytes,
   });
 
   try {
@@ -617,25 +673,23 @@ async function downloadSubtitleScheme(
 
       if (fileMatches(finalPath, file.expectedSize || 0)) {
         const fileSize = file.expectedSize || fs.statSync(finalPath).size;
+        progressTracker.observeFileTotal(file, fileSize);
         completedBytes += fileSize;
+        const progressState = progressTracker.getProgress(completedBytes);
         setSchemeDownloadState(scheme.schemeId, {
           downloading: true,
           file: file.path,
-          downloadedBytes: completedBytes,
-          totalBytes: overallTotalBytes || completedBytes,
-          percent: (overallTotalBytes || completedBytes) > 0
-            ? Math.min(100, Math.round((completedBytes / (overallTotalBytes || completedBytes)) * 100))
-            : 100,
+          downloadedBytes: progressState.downloadedBytes,
+          totalBytes: progressState.totalBytes,
+          percent: progressState.percent,
         });
         onStatus(buildFileStatusMessage(scheme, file.path, '已存在'));
         onProgress({
           schemeId: scheme.schemeId,
           file: file.path,
-          downloadedBytes: completedBytes,
-          totalBytes: overallTotalBytes || completedBytes,
-          percent: (overallTotalBytes || completedBytes) > 0
-            ? Math.min(100, Math.round((completedBytes / (overallTotalBytes || completedBytes)) * 100))
-            : 100,
+          downloadedBytes: progressState.downloadedBytes,
+          totalBytes: progressState.totalBytes,
+          percent: progressState.percent,
         });
         continue;
       }
@@ -657,36 +711,26 @@ async function downloadSubtitleScheme(
         tmpPath,
         signal,
         (fileDownloadedBytes, fileTotalBytes) => {
-          const estimatedFileTotal = file.expectedSize || fileTotalBytes || 0;
-          const currentOverallTotal = overallTotalBytes > 0
-            ? overallTotalBytes
-            : completedBytes + estimatedFileTotal;
-
-          if (!overallTotalBytes && currentOverallTotal > 0) {
-            overallTotalBytes = currentOverallTotal;
-          }
-
-          const overallDone = completedBytes + fileDownloadedBytes;
-          const percent = currentOverallTotal > 0
-            ? Math.min(100, Math.round((overallDone / currentOverallTotal) * 100))
-            : 0;
+          const observedFileTotal = getExpectedFileSize(file) || fileTotalBytes || fileDownloadedBytes;
+          progressTracker.observeFileTotal(file, observedFileTotal);
+          const progressState = progressTracker.getProgress(completedBytes + fileDownloadedBytes);
 
           setSchemeDownloadState(scheme.schemeId, {
             downloading: true,
             file: file.path,
-            downloadedBytes: overallDone,
-            totalBytes: currentOverallTotal,
-            percent,
+            downloadedBytes: progressState.downloadedBytes,
+            totalBytes: progressState.totalBytes,
+            percent: progressState.percent,
           });
 
           onProgress({
             schemeId: scheme.schemeId,
             file: file.path,
             fileDownloadedBytes,
-            fileTotalBytes: estimatedFileTotal,
-            downloadedBytes: overallDone,
-            totalBytes: currentOverallTotal,
-            percent,
+            fileTotalBytes: observedFileTotal,
+            downloadedBytes: progressState.downloadedBytes,
+            totalBytes: progressState.totalBytes,
+            percent: progressState.percent,
           });
         }
       );
@@ -698,24 +742,23 @@ async function downloadSubtitleScheme(
         throw new Error(`文件校验失败: ${file.path}，期望 ${file.expectedSize} 字节，实际 ${finalSize} 字节`);
       }
 
+      progressTracker.observeFileTotal(file, finalSize);
       completedBytes += file.expectedSize || finalSize;
-      const percent = (overallTotalBytes || completedBytes) > 0
-        ? Math.min(100, Math.round((completedBytes / (overallTotalBytes || completedBytes)) * 100))
-        : 100;
+      const progressState = progressTracker.getProgress(completedBytes);
 
       setSchemeDownloadState(scheme.schemeId, {
         downloading: true,
         file: file.path,
-        downloadedBytes: completedBytes,
-        totalBytes: overallTotalBytes || completedBytes,
-        percent,
+        downloadedBytes: progressState.downloadedBytes,
+        totalBytes: progressState.totalBytes,
+        percent: progressState.percent,
       });
       onProgress({
         schemeId: scheme.schemeId,
         file: file.path,
-        downloadedBytes: completedBytes,
-        totalBytes: overallTotalBytes || completedBytes,
-        percent,
+        downloadedBytes: progressState.downloadedBytes,
+        totalBytes: progressState.totalBytes,
+        percent: progressState.percent,
       });
       onStatus(buildFileStatusMessage(scheme, file.path, '完成'));
     }
@@ -756,6 +799,7 @@ module.exports = {
   DEFAULT_SUBTITLE_SCHEME_ID,
   MODEL_DOWNLOAD_SOURCES,
   SUBTITLE_SCHEMES,
+  createDownloadProgressTracker,
   getSubtitleSchemes,
   getModelDownloadSource,
   resolveSubtitleSchemeId,
