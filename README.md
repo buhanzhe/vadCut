@@ -103,7 +103,7 @@ npm start
 | `paraformer-bilingual` | 在线 | 默认方案，下载体积更小，适合常规中英字幕提取 |
 | `zipformer-bilingual` | 在线 | 流式 transducer 方案，适合双语内容补充 |
 | `sense-voice` | 离线 | 多语种方案，适合中文、英文、粤语等混合内容 |
-| `offline-paraformer-zh` | 离线 | 中文方案，支持 `DirectML / CPU`，适合本地批处理 |
+| `offline-paraformer-zh` | 离线 | 中文 GPU 方案，支持 `DirectML / CPU`，适合本地批处理 |
 
 字幕模型默认下载到：
 
@@ -113,7 +113,7 @@ npm start
 
 ## DirectML 说明
 
-如果你想优先让 `Offline Paraformer（中文）` 走 DirectML，可以在启动前设置：
+如果你想优先让 `Offline Paraformer（中文，GPU）` 走 DirectML，可以在启动前设置：
 
 ```cmd
 set VADCUT_ASR_PROVIDER=directml

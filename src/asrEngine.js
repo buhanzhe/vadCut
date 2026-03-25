@@ -165,7 +165,7 @@ const SUBTITLE_SCHEMES = [
   },
   {
     schemeId: 'offline-paraformer-zh',
-    label: 'Offline Paraformer（中文）',
+    label: 'Offline Paraformer（中文，GPU）',
     description: '离线 Paraformer 方案。集成 sherpa-onnx-paraformer-zh；GPU 使用 model.onnx，CPU 使用 model.int8.onnx。',
     runtimeType: 'offline',
     recognizerType: 'offlineParaformer',
