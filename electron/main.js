@@ -1,25 +1,24 @@
 'use strict';
 
-const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
-const path = require('path');
+const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron');
 const fs = require('fs');
+const path = require('path');
 const { spawn } = require('child_process');
+
 const {
   DEFAULT_SUBTITLE_SCHEME_ID,
+  DOWNLOAD_CANCELLED_CODE,
+  downloadSubtitleScheme,
   getAllSubtitleSchemeStatuses,
   getCurrentSubtitleScheme,
   getSubtitleSchemeStatus,
-  setCurrentSubtitleScheme,
   resolveSubtitleSchemeId,
   resolveSubtitleSchemeInfo,
-  downloadSubtitleScheme,
-  DOWNLOAD_CANCELLED_CODE,
+  setCurrentSubtitleScheme,
 } = require('../src/asrEngine');
+const { runBatch } = require('../src/batchRunner');
 const { processFolder, scanVideoFiles } = require('../src/processor');
-const {
-  createCancelledError,
-  isCancelledError,
-} = require('../src/taskCancellation');
+const { createCancelledError } = require('../src/taskCancellation');
 
 let mainWindow = null;
 let schemeDownloadSignal = null;
@@ -30,6 +29,7 @@ let activeProcessJob = null;
 const SUBTITLE_WORKER_PATH = path.join(__dirname, 'subtitle-worker.js');
 const SUBTITLE_WORKER_READY_TIMEOUT_MS = 15000;
 const SUBTITLE_WORKER_CANCEL_GRACE_MS = 2000;
+const SUBTITLE_MAX_CONCURRENCY = 2;
 
 app.commandLine.appendSwitch('lang', 'zh-CN');
 
@@ -41,14 +41,6 @@ function getSubtitleWorkerCwd() {
   return app.isPackaged
     ? process.resourcesPath
     : path.join(__dirname, '..');
-}
-
-function formatElapsed(ms) {
-  const totalSec = ms / 1000;
-  if (totalSec < 60) return `${totalSec.toFixed(1)}秒`;
-  const m = Math.floor(totalSec / 60);
-  const s = Math.round(totalSec % 60);
-  return `${m}分${s}秒`;
 }
 
 function createRendererProcessCallbacks() {
@@ -77,20 +69,38 @@ function createRendererProcessCallbacks() {
   };
 }
 
-function clearSubtitleWorkerKillTimer(job) {
-  if (job?.workerKillTimer) {
-    clearTimeout(job.workerKillTimer);
-    job.workerKillTimer = null;
+function clearSubtitleWorkerKillTimer(job, child) {
+  const timer = job?.workerKillTimers?.get(child);
+  if (!timer) return;
+  clearTimeout(timer);
+  job.workerKillTimers.delete(child);
+}
+
+function trackProcessChild(job, child) {
+  job?.children?.add(child);
+}
+
+function untrackProcessChild(job, child) {
+  clearSubtitleWorkerKillTimer(job, child);
+  job?.children?.delete(child);
+}
+
+function killTrackedChildren(job) {
+  if (!job?.children) return;
+  for (const child of Array.from(job.children)) {
+    clearSubtitleWorkerKillTimer(job, child);
+    if (child && !child.killed) {
+      try {
+        child.kill();
+      } catch (_) {}
+    }
   }
+  job.children.clear();
+  job.workerKillTimers.clear();
 }
 
 function finalizeProcessJob(job) {
-  clearSubtitleWorkerKillTimer(job);
-  if (job?.child && !job.child.killed) {
-    try {
-      job.child.kill();
-    } catch (_) {}
-  }
+  killTrackedChildren(job);
   if (activeProcessJob === job) {
     activeProcessJob = null;
   }
@@ -104,20 +114,23 @@ function requestProcessCancellation(job) {
     return;
   }
 
-  if (job.child?.connected) {
-    try {
-      job.child.send({ type: 'cancel' });
-    } catch (_) {}
-  }
-
-  clearSubtitleWorkerKillTimer(job);
-  job.workerKillTimer = setTimeout(() => {
-    if (activeProcessJob === job && job.child && !job.child.killed) {
+  for (const child of Array.from(job.children)) {
+    if (child.connected) {
       try {
-        job.child.kill();
+        child.send({ type: 'cancel' });
       } catch (_) {}
     }
-  }, SUBTITLE_WORKER_CANCEL_GRACE_MS);
+
+    clearSubtitleWorkerKillTimer(job, child);
+    const killTimer = setTimeout(() => {
+      if (activeProcessJob === job && job.children.has(child) && !child.killed) {
+        try {
+          child.kill();
+        } catch (_) {}
+      }
+    }, SUBTITLE_WORKER_CANCEL_GRACE_MS);
+    job.workerKillTimers.set(child, killTimer);
+  }
 }
 
 function startBackgroundProcess(job, runner) {
@@ -151,9 +164,11 @@ async function runSubtitleWorkerTask(videoPath, index, subtitleScheme, job) {
       windowsHide: true,
     });
 
-    job.child = child;
+    trackProcessChild(job, child);
+
     let settled = false;
     let stderr = '';
+    let readyReceived = false;
 
     const readyTimer = setTimeout(() => {
       if (settled) return;
@@ -162,14 +177,10 @@ async function runSubtitleWorkerTask(videoPath, index, subtitleScheme, job) {
       } catch (_) {}
       finish(reject, new Error('字幕子进程启动超时'));
     }, SUBTITLE_WORKER_READY_TIMEOUT_MS);
-    let readyReceived = false;
 
     function cleanup() {
       clearTimeout(readyTimer);
-      clearSubtitleWorkerKillTimer(job);
-      if (job.child === child) {
-        job.child = null;
-      }
+      untrackProcessChild(job, child);
     }
 
     function finish(fn, value) {
@@ -237,9 +248,7 @@ async function runSubtitleWorkerTask(videoPath, index, subtitleScheme, job) {
       if (err?.code === 'ENOENT') {
         finish(
           reject,
-          new Error(
-            `字幕子进程启动失败: exec=${childProcessPath}, script=${SUBTITLE_WORKER_PATH}, cwd=${workerCwd}`
-          )
+          new Error(`字幕子进程启动失败: exec=${childProcessPath}, script=${SUBTITLE_WORKER_PATH}, cwd=${workerCwd}`)
         );
         return;
       }
@@ -278,11 +287,6 @@ async function runSubtitleFolderJob(folderPath, options, job) {
   const callbacks = createRendererProcessCallbacks();
   const videoFiles = scanVideoFiles(folderPath);
   const subtitleScheme = resolveSubtitleSchemeInfo(options.subtitleScheme);
-  const folderStart = Date.now();
-  let success = 0;
-  let skipped = 0;
-  let errors = 0;
-  const timings = [];
 
   callbacks.onScan(videoFiles);
 
@@ -291,78 +295,28 @@ async function runSubtitleFolderJob(folderPath, options, job) {
     return;
   }
 
-  callbacks.onFileLog(-1, '并发数: 1');
+  const concurrency = Math.min(SUBTITLE_MAX_CONCURRENCY, videoFiles.length);
+  callbacks.onFileLog(-1, `并发数: ${concurrency}`);
   callbacks.onFileLog(-1, `字幕方案: ${subtitleScheme.label}`);
 
-  for (let index = 0; index < videoFiles.length; index += 1) {
-    if (job.signal.cancelled) {
-      break;
-    }
-
-    const videoPath = videoFiles[index];
-    const srtPath = videoPath.replace(/\.[^.]+$/, '.srt');
-    callbacks.onFileStart(index, videoPath);
-
-    if (fs.existsSync(srtPath)) {
-      callbacks.onFileLog(index, '已跳过（字幕文件已存在）');
-      callbacks.onFileDone(index, {
-        skipped: true,
-        subtitleOnly: true,
-        reason: 'subtitle exists',
-        subtitleSchemeId: subtitleScheme.schemeId,
-        subtitleSchemeLabel: subtitleScheme.label,
-      });
-      skipped += 1;
-      continue;
-    }
-
-    try {
-      const result = await runSubtitleWorkerTask(videoPath, index, subtitleScheme, job);
-      callbacks.onFileDone(index, result);
-      if (result?.skipped) {
-        skipped += 1;
-      } else {
-        success += 1;
-        if (result?.elapsed) {
-          timings.push({
-            name: path.basename(videoPath),
-            elapsed: result.elapsed,
-          });
-        }
-      }
-    } catch (err) {
-      callbacks.onFileError(index, err?.message || '字幕提取失败');
-      errors += 1;
-      if (isCancelledError(err)) {
-        break;
-      }
-    }
-  }
+  const summary = await runBatch({
+    files: videoFiles,
+    concurrency,
+    signal: job.signal,
+    onFileStart: callbacks.onFileStart,
+    onFileDone: callbacks.onFileDone,
+    onFileError: callbacks.onFileError,
+    onFileLog: callbacks.onFileLog,
+    runFile: ({ index, filePath }) => runSubtitleWorkerTask(filePath, index, subtitleScheme, job),
+  });
 
   if (job.signal.cancelled) {
     callbacks.onFileLog(-1, '任务已取消，已停止后续文件');
   }
 
-  const totalElapsed = Date.now() - folderStart;
-  if (timings.length > 0) {
-    const lines = ['── 耗时汇总 ─────────────────────'];
-    for (const timing of timings) {
-      lines.push(`  ${timing.name}: ${formatElapsed(timing.elapsed)}`);
-    }
-    lines.push(`  合计: ${formatElapsed(totalElapsed)}（共 ${timings.length} 个文件）`);
-    lines.push('──────────────────────────────────');
-    for (const line of lines) {
-      callbacks.onFileLog(-1, line);
-    }
-  }
-
   callbacks.onAllDone({
-    total: videoFiles.length,
-    success,
-    skipped,
-    errors,
+    ...summary,
     outputDir: folderPath,
-    totalElapsed,
     subtitleSchemeId: subtitleScheme.schemeId,
     subtitleSchemeLabel: subtitleScheme.label,
   });
@@ -376,8 +330,8 @@ function startProcessJob(folderPath, options) {
   const job = {
     kind: options.subtitleOnly ? 'subtitle' : 'clip',
     signal: { cancelled: false },
-    child: null,
-    workerKillTimer: null,
+    children: new Set(),
+    workerKillTimers: new Map(),
   };
   activeProcessJob = job;
 
@@ -505,35 +459,35 @@ function createWindow() {
   });
   mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
 
-  mainWindow.on('maximize',   () => mainWindow?.webContents.send('window:maximized', true));
+  mainWindow.on('maximize', () => mainWindow?.webContents.send('window:maximized', true));
   mainWindow.on('unmaximize', () => mainWindow?.webContents.send('window:maximized', false));
-  mainWindow.on('closed', () => { mainWindow = null; });
+  mainWindow.on('closed', () => {
+    mainWindow = null;
+  });
 }
 
 app.whenReady().then(() => {
   createWindow();
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    if (BrowserWindow.getAllWindows().length === 0) {
+      createWindow();
+    }
   });
 });
 
 app.on('before-quit', () => {
   requestProcessCancellation(activeProcessJob);
-  if (activeProcessJob?.child && !activeProcessJob.child.killed) {
-    try {
-      activeProcessJob.child.kill();
-    } catch (_) {}
-  }
+  killTrackedChildren(activeProcessJob);
   if (schemeDownloadSignal) {
     schemeDownloadSignal.cancelled = true;
   }
 });
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
+  if (process.platform !== 'darwin') {
+    app.quit();
+  }
 });
-
-// ─── IPC Handlers ──────────────────────────────────────────────────────────
 
 ipcMain.handle('dialog:openFolder', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
@@ -545,7 +499,9 @@ ipcMain.handle('dialog:openFolder', async () => {
 });
 
 ipcMain.handle('shell:openFolder', async (_event, folderPath) => {
-  if (fs.existsSync(folderPath)) shell.openPath(folderPath);
+  if (fs.existsSync(folderPath)) {
+    shell.openPath(folderPath);
+  }
 });
 
 ipcMain.handle('process:start', async (_event, folderPath, options = {}) => {
@@ -579,18 +535,17 @@ ipcMain.handle('process:cancel', () => {
 
 ipcMain.on('window:minimize', () => mainWindow?.minimize());
 ipcMain.on('window:maximize', () => {
-  if (mainWindow?.isMaximized()) mainWindow.unmaximize();
-  else mainWindow?.maximize();
+  if (mainWindow?.isMaximized()) {
+    mainWindow.unmaximize();
+  } else {
+    mainWindow?.maximize();
+  }
 });
 ipcMain.on('window:close', () => mainWindow?.close());
 
-ipcMain.handle('engine:getStatus', () => {
-  return getSubtitleSchemeStatus(DEFAULT_SUBTITLE_SCHEME_ID);
-});
+ipcMain.handle('engine:getStatus', () => getSubtitleSchemeStatus(DEFAULT_SUBTITLE_SCHEME_ID));
 
-ipcMain.handle('engine:download', async () => {
-  return startSubtitleSchemeDownload(DEFAULT_SUBTITLE_SCHEME_ID);
-});
+ipcMain.handle('engine:download', async () => startSubtitleSchemeDownload(DEFAULT_SUBTITLE_SCHEME_ID));
 
 ipcMain.handle('engine:cancelDownload', () => {
   if (schemeDownloadSignal && schemeDownloadSchemeId === DEFAULT_SUBTITLE_SCHEME_ID) {
@@ -599,21 +554,13 @@ ipcMain.handle('engine:cancelDownload', () => {
   return { ok: true };
 });
 
-ipcMain.handle('subtitleSchemes:listStatuses', () => {
-  return getAllSubtitleSchemeStatuses();
-});
+ipcMain.handle('subtitleSchemes:listStatuses', () => getAllSubtitleSchemeStatuses());
 
-ipcMain.handle('subtitleSchemes:getCurrent', () => {
-  return resolveSubtitleSchemeInfo(getCurrentSubtitleScheme());
-});
+ipcMain.handle('subtitleSchemes:getCurrent', () => resolveSubtitleSchemeInfo(getCurrentSubtitleScheme()));
 
-ipcMain.handle('subtitleSchemes:setCurrent', (_event, schemeId) => {
-  return setCurrentSubtitleScheme(schemeId);
-});
+ipcMain.handle('subtitleSchemes:setCurrent', (_event, schemeId) => setCurrentSubtitleScheme(schemeId));
 
-ipcMain.handle('subtitleSchemes:download', async (_event, schemeId) => {
-  return startSubtitleSchemeDownload(schemeId);
-});
+ipcMain.handle('subtitleSchemes:download', async (_event, schemeId) => startSubtitleSchemeDownload(schemeId));
 
 ipcMain.handle('subtitleSchemes:cancelDownload', (_event, schemeId) => {
   if (schemeDownloadSignal) {

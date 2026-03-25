@@ -224,8 +224,6 @@ function statusIcon(status) {
       return `<svg class="file-status-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-dim)" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/></svg>`;
     case 'error':
       return `<svg class="file-status-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--danger)" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
-    case 'copy':
-      return `<svg class="file-status-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--warning)" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
     default:
       return '';
   }
@@ -238,7 +236,6 @@ function badgeClass(status) {
     done: 'badge-done',
     skip: 'badge-skip',
     error: 'badge-error',
-    copy: 'badge-copy',
   }[status] || 'badge-waiting';
 }
 
@@ -251,13 +248,11 @@ function badgeText(file, tab) {
     case 'done':
       return tab === 'subtitle'
         ? '字幕已生成'
-        : (file.result?.copied ? '已复制' : `切头${(file.result?.headCut || 0).toFixed(1)}s 切尾${(file.result?.tailCut || 0).toFixed(1)}s`);
+        : `切头${(file.result?.headCut || 0).toFixed(1)}s 切尾${(file.result?.tailCut || 0).toFixed(1)}s`;
     case 'skip':
       return '已跳过';
     case 'error':
       return '出错';
-    case 'copy':
-      return '直接复制';
     default:
       return '';
   }
@@ -273,7 +268,6 @@ function buildResultText(file, tab) {
       ? `SRT 已生成${schemeLabel} → ${srtName}`
       : `SRT 字幕已生成${schemeLabel}`;
   }
-  if (file.result?.copied) return '直接复制（无需剪辑）';
   return `已剪辑 → 切掉开头 ${(file.result?.headCut || 0).toFixed(1)}s，结尾 ${(file.result?.tailCut || 0).toFixed(1)}s`;
 }
 
@@ -327,15 +321,19 @@ function syncOverallProgress(tab) {
   const state = states[tab];
   const refs = panels[tab];
   const total = state.files.length;
-  const done = state.files.filter((file) => ['done', 'skip', 'error', 'copy'].includes(file.status)).length;
+  const done = state.files.filter((file) => ['done', 'skip', 'error'].includes(file.status)).length;
   const pct = total > 0 ? Math.round((done / total) * 100) : 0;
   refs.progressBar.style.width = `${pct}%`;
   refs.progressCount.textContent = `${done} / ${total}`;
   if (state.running) {
-    const current = state.files.findIndex((file) => file.status === 'running');
-    refs.progressLabel.textContent = current >= 0
-      ? `正在处理: ${state.files[current].name}`
-      : '处理中...';
+    const runningFiles = state.files.filter((file) => file.status === 'running');
+    if (runningFiles.length === 1) {
+      refs.progressLabel.textContent = `正在处理: ${runningFiles[0].name}`;
+    } else if (runningFiles.length > 1) {
+      refs.progressLabel.textContent = `正在处理 ${runningFiles.length} 个文件`;
+    } else {
+      refs.progressLabel.textContent = '处理中...';
+    }
   }
 }
 
@@ -731,9 +729,6 @@ function registerIPCListeners(tab) {
       state.files[index].status = 'done';
       const schemeSuffix = result.subtitleSchemeLabel ? ` (${result.subtitleSchemeLabel})` : '';
       addLog(tab, `  → 字幕已生成 ✓${schemeSuffix}`, 'success');
-    } else if (result.copied) {
-      state.files[index].status = 'copy';
-      addLog(tab, '  → 直接复制（无需剪辑）', 'warn');
     } else {
       state.files[index].status = 'done';
       addLog(tab, `  → 完成 ✓ 切头 ${result.headCut.toFixed(1)}s，切尾 ${result.tailCut.toFixed(1)}s`, 'success');

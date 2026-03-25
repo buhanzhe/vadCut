@@ -1,5 +1,7 @@
 'use strict';
 
+const fs = require('fs');
+
 const {
   resolveSubtitleSchemeId,
   resolveSubtitleSchemeInfo,
@@ -98,10 +100,26 @@ process.on('message', async (message) => {
       throw createCancelledError('字幕提取已取消');
     }
 
+    const existingSrtPath = String(message.videoPath || '').replace(/\.[^.]+$/, '.srt');
+    if (fs.existsSync(existingSrtPath)) {
+      send('log', { msg: '已跳过（字幕文件已存在）' });
+      send('done', {
+        result: {
+          skipped: true,
+          subtitleOnly: true,
+          reason: 'subtitle exists',
+          subtitleSchemeId: scheme.schemeId,
+          subtitleSchemeLabel: scheme.label,
+        },
+      });
+      exitSoon(0);
+      return;
+    }
+
     send('log', { msg: '初始化字幕引擎...' });
     const transcribeVideo = getTranscribeVideo();
 
-    const srtPath = await transcribeVideo(
+    const generatedSrtPath = await transcribeVideo(
       message.videoPath,
       {
         schemeId,
@@ -120,10 +138,10 @@ process.on('message', async (message) => {
     }
 
     send('done', {
-      result: srtPath
+      result: generatedSrtPath
         ? {
           subtitleOnly: true,
-          srtPath,
+          srtPath: generatedSrtPath,
           elapsed: Date.now() - startedAt,
           subtitleSchemeId: scheme.schemeId,
           subtitleSchemeLabel: scheme.label,

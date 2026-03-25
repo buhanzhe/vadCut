@@ -8,14 +8,7 @@
 
 const path = require('path');
 const fs = require('fs');
-const os = require('os');
-const { spawn } = require('child_process');
 const sherpaNode = require('sherpa-onnx-node');
-
-const ffmpegPath = (() => {
-  const p = require('ffmpeg-static');
-  return p.replace('app.asar', 'app.asar.unpacked');
-})();
 
 const {
   DEFAULT_SUBTITLE_SCHEME_ID,
@@ -27,9 +20,13 @@ const {
   PREFERRED_ASR_PROVIDER,
   ASR_PROVIDER_FALLBACKS,
 } = require('./asrProviderConfig');
+const {
+  extractAudioToTempWav,
+  readMono16kWav,
+  safeRemoveFile,
+} = require('./audioUtils');
 const { detectSubtitleSpeechSegments } = require('./subtitleVad');
 const {
-  createCancelledError,
   throwIfCancelled,
 } = require('./taskCancellation');
 
@@ -262,89 +259,6 @@ function reportTranscribeProgress(onProgress, stage, pct, force = false) {
     pct,
     force,
   });
-}
-
-function extractAudioWav(videoPath, options = {}) {
-  const signal = options.signal || null;
-  const wavPath = path.join(
-    os.tmpdir(),
-    `asr_${Date.now()}_${Math.random().toString(36).slice(2)}.wav`
-  );
-
-  return new Promise((resolve, reject) => {
-    throwIfCancelled(signal, '字幕提取已取消');
-    const proc = spawn(ffmpegPath, [
-      '-i', videoPath,
-      '-vn', '-ar', String(SAMPLE_RATE), '-ac', '1',
-      '-f', 'wav', '-y', wavPath,
-    ], { windowsHide: true });
-
-    let stderr = '';
-    let settled = false;
-    const cancelWatcher = signal
-      ? setInterval(() => {
-        if (signal.cancelled && !proc.killed) {
-          proc.kill();
-        }
-      }, 100)
-      : null;
-
-    function cleanup() {
-      if (cancelWatcher) {
-        clearInterval(cancelWatcher);
-      }
-    }
-
-    proc.stderr.on('data', (data) => { stderr += data.toString(); });
-    proc.on('close', (code) => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      if (signal?.cancelled) {
-        reject(createCancelledError('字幕提取已取消'));
-        return;
-      }
-      if (code !== 0) {
-        reject(new Error(`ffmpeg 音频提取失败: ${stderr.slice(-300)}`));
-      } else {
-        resolve(wavPath);
-      }
-    });
-    proc.on('error', (err) => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      if (signal?.cancelled) {
-        reject(createCancelledError('字幕提取已取消'));
-      } else {
-        reject(err);
-      }
-    });
-  });
-}
-
-function readWavSamples(wavPath, signal = null) {
-  throwIfCancelled(signal, '字幕提取已取消');
-  const buf = fs.readFileSync(wavPath);
-  let off = 12;
-  while (off < buf.length - 8) {
-    throwIfCancelled(signal, '字幕提取已取消');
-    const id = buf.toString('ascii', off, off + 4);
-    const sz = buf.readUInt32LE(off + 4);
-    if (id === 'data') {
-      const pcm = buf.subarray(off + 8, off + 8 + sz);
-      const f32 = new Float32Array(pcm.length / 2);
-      for (let i = 0; i < f32.length; i += 1) {
-        if (i % 8192 === 0) {
-          throwIfCancelled(signal, '字幕提取已取消');
-        }
-        f32[i] = pcm.readInt16LE(i * 2) / 32768;
-      }
-      return f32;
-    }
-    off += 8 + sz;
-  }
-  throw new Error('WAV data chunk 未找到');
 }
 
 function toSrtTime(sec) {
@@ -733,13 +647,14 @@ async function transcribeVideo(videoPath, optionsOrOnLog = {}, maybeOnLog = () =
   onLog('提取音频...');
   reportTranscribeProgress(onProgress, 'audio', 5, true);
 
-  const wavPath = await extractAudioWav(videoPath, { signal });
+  let wavPath = null;
   let recognizer = null;
 
   try {
+    wavPath = await extractAudioToTempWav(videoPath, { signal });
     throwIfCancelled(signal, '字幕提取已取消');
     reportTranscribeProgress(onProgress, 'audio', 25, true);
-    const samples = readWavSamples(wavPath, signal);
+    const samples = readMono16kWav(wavPath, signal);
     const totalSec = samples.length / SAMPLE_RATE;
     onLog(`音频时长: ${totalSec.toFixed(1)}s`);
     reportTranscribeProgress(onProgress, 'audio', 35, true);
@@ -867,9 +782,7 @@ async function transcribeVideo(videoPath, optionsOrOnLog = {}, maybeOnLog = () =
     return null;
   } finally {
     freeNativeHandle(recognizer);
-    try {
-      fs.unlinkSync(wavPath);
-    } catch (_) {}
+    safeRemoveFile(wavPath);
   }
 }
 

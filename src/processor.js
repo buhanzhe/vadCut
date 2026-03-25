@@ -3,14 +3,17 @@
  *
  * 通过回调函数上报进度，适配 IPC 通信或命令行输出
  */
-const path = require('path');
+'use strict';
+
 const fs = require('fs');
+const path = require('path');
 
-const { getVideoMetadata, extractAudioWav, trimVideo, getEncoderInfo, makeTempPath } = require('./ffmpegUtils');
-
-const { detectSpeechBounds } = require('./vad');
+const { extractAudioToTempWav, safeRemoveFile } = require('./audioUtils');
+const { formatElapsed, runBatch } = require('./batchRunner');
+const { getVideoMetadata, trimVideo, getEncoderInfo } = require('./ffmpegUtils');
 const { transcribeVideo } = require('./asr');
 const { resolveSubtitleSchemeInfo } = require('./asrEngine');
+const { detectSpeechBounds } = require('./vad');
 
 const VIDEO_EXTENSIONS = new Set([
   '.mp4', '.mkv', '.avi', '.mov', '.mts', '.m2ts', '.ts',
@@ -18,6 +21,7 @@ const VIDEO_EXTENSIONS = new Set([
 ]);
 
 const OUTPUT_SUBDIR = '剪辑';
+const MAX_CONCURRENCY = 4;
 
 function formatTime(seconds) {
   const m = Math.floor(seconds / 60);
@@ -25,122 +29,111 @@ function formatTime(seconds) {
   return `${String(m).padStart(2, '0')}:${s.padStart(5, '0')}`;
 }
 
-/** 将毫秒格式化为易读的耗时字符串，如 "1分23秒" 或 "45秒" */
-function formatElapsed(ms) {
-  const totalSec = ms / 1000;
-  if (totalSec < 60) return `${totalSec.toFixed(1)}秒`;
-  const m = Math.floor(totalSec / 60);
-  const s = Math.round(totalSec % 60);
-  return `${m}分${s}秒`;
-}
-
 function scanVideoFiles(folderPath) {
   const entries = fs.readdirSync(folderPath, { withFileTypes: true });
   return entries
-    .filter((e) => {
-      if (!e.isFile()) return false;
-      const ext = path.extname(e.name).toLowerCase();
-      return VIDEO_EXTENSIONS.has(ext);
+    .filter((entry) => {
+      if (!entry.isFile()) return false;
+      return VIDEO_EXTENSIONS.has(path.extname(entry.name).toLowerCase());
     })
-    .map((e) => path.join(folderPath, e.name));
+    .map((entry) => path.join(folderPath, entry.name));
 }
 
-/**
- * 处理单个视频
- * @param {string} videoPath
- * @param {string} outputDir
- * @param {object} callbacks
- *   onLog(msg)           - 日志文本
- *   onStage(stage, pct)  - 当前阶段与进度 (0-100)
- * @returns {Promise<object>} result
- */
-async function processVideo(videoPath, outputDir, callbacks = {}, options = {}) {
+async function processSubtitleFile(videoPath, callbacks = {}, options = {}) {
   const { onLog = () => {}, onStage = () => {} } = callbacks;
-  const t0 = Date.now();
+  const signal = options.signal || null;
+  const startedAt = Date.now();
   const subtitleScheme = resolveSubtitleSchemeInfo(options.subtitleScheme);
+  const srtPath = videoPath.replace(/\.[^.]+$/, '.srt');
 
-  const extRaw = path.extname(videoPath);           // 保留原始大小写，用于剥离
-  const nameWithoutExt = path.basename(videoPath, extRaw);  // 用原始大小写剥离，避免 00108.MTS → 00108.MTS.mp4
-  const outputExt = '.mp4'; // 统一输出 MP4（重编码+美化+降噪需要）
-
-  if (options.subtitleOnly) {
-    const srtPath = videoPath.replace(/\.[^.]+$/, '.srt');
-    if (fs.existsSync(srtPath)) {
-      onLog('已跳过（字幕文件已存在）');
-      return {
-        skipped: true,
-        subtitleOnly: true,
-        reason: 'subtitle exists',
-        subtitleSchemeId: subtitleScheme.schemeId,
-        subtitleSchemeLabel: subtitleScheme.label,
-      };
-    }
-
-    onLog('提取字幕中...');
-    onStage('asr', 0);
-    const generatedSrtPath = await transcribeVideo(
-      videoPath,
-      { schemeId: subtitleScheme.schemeId },
-      (msg) => onLog(msg)
-    );
-    onStage('asr', 100);
-    onLog(`耗时: ${formatElapsed(Date.now() - t0)}`);
-
-    if (!generatedSrtPath) {
-      return {
-        skipped: true,
-        subtitleOnly: true,
-        reason: 'empty subtitle',
-        elapsed: Date.now() - t0,
-        subtitleSchemeId: subtitleScheme.schemeId,
-        subtitleSchemeLabel: subtitleScheme.label,
-      };
-    }
-
+  if (fs.existsSync(srtPath)) {
+    onLog('已跳过（字幕文件已存在）');
     return {
+      skipped: true,
       subtitleOnly: true,
-      srtPath: generatedSrtPath,
-      elapsed: Date.now() - t0,
+      reason: 'subtitle exists',
       subtitleSchemeId: subtitleScheme.schemeId,
       subtitleSchemeLabel: subtitleScheme.label,
     };
   }
 
-  const outputPath = path.join(outputDir, nameWithoutExt + outputExt);
+  onLog('提取字幕中...');
+  onStage('asr', 0);
+  const generatedSrtPath = await transcribeVideo(
+    videoPath,
+    {
+      schemeId: subtitleScheme.schemeId,
+      signal,
+    },
+    (msg) => onLog(msg)
+  );
+  onStage('asr', 100);
+  onLog(`耗时: ${formatElapsed(Date.now() - startedAt)}`);
+
+  if (!generatedSrtPath) {
+    return {
+      skipped: true,
+      subtitleOnly: true,
+      reason: 'empty subtitle',
+      elapsed: Date.now() - startedAt,
+      subtitleSchemeId: subtitleScheme.schemeId,
+      subtitleSchemeLabel: subtitleScheme.label,
+    };
+  }
+
+  return {
+    subtitleOnly: true,
+    srtPath: generatedSrtPath,
+    elapsed: Date.now() - startedAt,
+    subtitleSchemeId: subtitleScheme.schemeId,
+    subtitleSchemeLabel: subtitleScheme.label,
+  };
+}
+
+async function processVideo(videoPath, outputDir, callbacks = {}, options = {}) {
+  const { onLog = () => {}, onStage = () => {} } = callbacks;
+  const signal = options.signal || null;
+
+  if (options.subtitleOnly) {
+    return processSubtitleFile(videoPath, callbacks, options);
+  }
+
+  const startedAt = Date.now();
+  const extRaw = path.extname(videoPath);
+  const nameWithoutExt = path.basename(videoPath, extRaw);
+  const outputPath = path.join(outputDir, `${nameWithoutExt}.mp4`);
+  let wavPath = null;
 
   if (fs.existsSync(outputPath)) {
-    onLog(`已跳过（输出文件已存在）`);
+    onLog('已跳过（输出文件已存在）');
     return { skipped: true };
   }
 
-  // 临时 WAV 必须用纯 ASCII 路径（ffmpeg-static 在 Windows 下的限制）
-  // 加随机后缀防止并发时路径冲突
-  const wavPath = makeTempPath('.wav');
-
   try {
-    // 1. 元数据
     onLog('读取视频元数据...');
     onStage('metadata', 0);
     const metadata = await getVideoMetadata(videoPath);
-    const audioStream = metadata.streams.find((s) => s.codec_type === 'audio');
+    const audioStream = metadata.streams.find((stream) => stream.codec_type === 'audio');
 
     if (!audioStream) {
       onLog('无音频轨道，跳过');
       return { skipped: true, reason: 'no audio' };
     }
 
-    const totalDuration = parseFloat(metadata.format.duration);
+    const totalDuration = Number(metadata.format.duration);
     onLog(`时长: ${formatTime(totalDuration)}`);
     onStage('metadata', 100);
 
-    // 2. 提取音频
     onLog('提取音频（16kHz WAV）...');
     onStage('audio', 0);
-    await extractAudioWav(videoPath, wavPath, (pct) => onStage('audio', pct));
+    wavPath = await extractAudioToTempWav(videoPath, {
+      signal,
+      durationSec: totalDuration,
+      onProgress: (pct) => onStage('audio', pct),
+    });
     onStage('audio', 100);
     onLog('音频提取完成');
 
-    // 3. VAD
     onLog('VAD 语音边界检测...');
     onStage('vad', 0);
     const {
@@ -154,9 +147,11 @@ async function processVideo(videoPath, outputDir, callbacks = {}, options = {}) 
       edgeFilterFallback,
     } = detectSpeechBounds(wavPath, {
       minEdgeSpeechDuration: 1.0,
+      signal,
     });
     onStage('vad', 100);
     onLog(`检测到 ${segments.length} 个语音片段`);
+
     const edgeMinLabel = Number(minEdgeSpeechDuration).toFixed(1).replace(/\.0$/, '');
     if (edgeFilterFallback) {
       onLog(`首尾过滤(<${edgeMinLabel}s)后无有效片段，已回退到原始语音边界`);
@@ -177,52 +172,53 @@ async function processVideo(videoPath, outputDir, callbacks = {}, options = {}) 
       onLog(`将剪去开头 ${headCut.toFixed(1)}s，结尾 ${tailCut.toFixed(1)}s`);
     }
 
-    // 4. 剪辑
     onLog(`编码器: ${await getEncoderInfo()}`);
     onLog('剪辑中...');
     onStage('trim', 0);
-    await trimVideo(videoPath, outputPath, firstSpeechTime, lastSpeechTime, totalDuration,
-      (pct) => onStage('trim', pct));
+    await trimVideo(
+      videoPath,
+      outputPath,
+      firstSpeechTime,
+      lastSpeechTime,
+      totalDuration,
+      (pct) => onStage('trim', pct),
+      { signal }
+    );
     onStage('trim', 100);
     onLog(`输出: ${path.basename(outputPath)}`);
 
-    // 5. ASR 字幕（VAD + SenseVoice）
     if (options.generateSubtitle) {
       onStage('asr', 0);
       try {
-        await transcribeVideo(outputPath, (msg) => onLog(msg));
+        await transcribeVideo(
+          outputPath,
+          {
+            signal,
+            ...(options.subtitleScheme ? { schemeId: options.subtitleScheme } : {}),
+          },
+          (msg) => onLog(msg)
+        );
       } catch (asrErr) {
         onLog(`ASR 跳过: ${asrErr.message}`);
       }
       onStage('asr', 100);
     }
 
-    onLog(`耗时: ${formatElapsed(Date.now() - t0)}`);
-
-    return { headCut, tailCut, outputPath, totalDuration, firstSpeechTime, lastSpeechTime, elapsed: Date.now() - t0 };
-
+    onLog(`耗时: ${formatElapsed(Date.now() - startedAt)}`);
+    return {
+      headCut,
+      tailCut,
+      outputPath,
+      totalDuration,
+      firstSpeechTime,
+      lastSpeechTime,
+      elapsed: Date.now() - startedAt,
+    };
   } finally {
-    if (fs.existsSync(wavPath)) {
-      try { fs.unlinkSync(wavPath); } catch (_) {}
-    }
+    safeRemoveFile(wavPath);
   }
 }
 
-const MAX_CONCURRENCY = 4;
-
-/**
- * 处理整个文件夹
- * @param {string} folderPath
- * @param {object} callbacks
- *   onScan(files)                     - 扫描结果 [filePath, ...]
- *   onFileStart(index, filePath)       - 开始处理某文件
- *   onFileLog(index, msg)              - 文件日志
- *   onFileStage(index, stage, pct)     - 文件当前阶段进度
- *   onFileDone(index, result)          - 文件完成
- *   onFileError(index, errMsg)         - 文件出错
- *   onAllDone(summary)                 - 全部完成
- * @param {object} [signal]  { cancelled: boolean }
- */
 async function processFolder(folderPath, callbacks = {}, signal = { cancelled: false }, options = {}) {
   const {
     onScan = () => {},
@@ -254,81 +250,37 @@ async function processFolder(folderPath, callbacks = {}, signal = { cancelled: f
     onFileLog(-1, `字幕方案: ${subtitleScheme.label}`);
   }
 
-  let success = 0, skipped = 0, errors = 0;
-  const timings = [];
-  const folderStart = Date.now();
-
-  let running = 0;
-  let nextIndex = 0;
-  const results = new Array(videoFiles.length);
-
-  await new Promise((resolveAll) => {
-    function tryStart() {
-      while (running < concurrency && nextIndex < videoFiles.length && !signal.cancelled) {
-        const i = nextIndex++;
-        running++;
-        const videoPath = videoFiles[i];
-        onFileStart(i, videoPath);
-
-        processVideo(videoPath, outputDir, {
-          onLog: (msg) => onFileLog(i, msg),
-          onStage: (stage, pct) => onFileStage(i, stage, pct),
-        }, options)
-          .then((result) => { results[i] = { ok: true, result }; })
-          .catch((err) => { results[i] = { ok: false, err }; })
-          .finally(() => {
-            running--;
-            const r = results[i];
-            if (r.ok) {
-              onFileDone(i, r.result);
-              if (r.result.skipped) {
-                skipped++;
-              } else {
-                success++;
-                if (r.result.elapsed) {
-                  timings.push({ name: path.basename(videoPath), elapsed: r.result.elapsed });
-                }
-              }
-            } else {
-              onFileError(i, r.err.message);
-              errors++;
-            }
-            if (signal.cancelled || nextIndex >= videoFiles.length) {
-              if (running === 0) resolveAll();
-            } else {
-              tryStart();
-            }
-          });
-      }
-      if ((signal.cancelled || nextIndex >= videoFiles.length) && running === 0) {
-        resolveAll();
-      }
-    }
-    tryStart();
+  const summary = await runBatch({
+    files: videoFiles,
+    concurrency,
+    signal,
+    onFileStart,
+    onFileDone,
+    onFileError,
+    onFileLog,
+    runFile: ({ index, filePath }) => processVideo(
+      filePath,
+      outputDir,
+      {
+        onLog: (msg) => onFileLog(index, msg),
+        onStage: (stage, pct) => onFileStage(index, stage, pct),
+      },
+      { ...options, signal }
+    ),
   });
 
-  const totalElapsed = Date.now() - folderStart;
-
-  if (timings.length > 0) {
-    const lines = [`── 耗时汇总 ─────────────────────`];
-    for (const t of timings) {
-      lines.push(`  ${t.name}: ${formatElapsed(t.elapsed)}`);
-    }
-    lines.push(`  合计: ${formatElapsed(totalElapsed)}（共 ${timings.length} 个文件）`);
-    lines.push('──────────────────────────────────');
-    for (const l of lines) onFileLog(-1, l);
-  }
-
   onAllDone({
-    total: videoFiles.length,
-    success,
-    skipped,
-    errors,
+    ...summary,
     outputDir,
-    totalElapsed,
     subtitleSchemeId: options.subtitleOnly ? subtitleScheme.schemeId : null,
     subtitleSchemeLabel: options.subtitleOnly ? subtitleScheme.label : null,
   });
 }
 
-module.exports = { processFolder, processVideo, scanVideoFiles, OUTPUT_SUBDIR, VIDEO_EXTENSIONS };
+module.exports = {
+  OUTPUT_SUBDIR,
+  VIDEO_EXTENSIONS,
+  processFolder,
+  processVideo,
+  scanVideoFiles,
+};

@@ -1,55 +1,13 @@
 'use strict';
 
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
-const { spawn } = require('child_process');
 
 const sherpaNode = require('sherpa-onnx-node');
-const ffmpegPath = require('ffmpeg-static').replace('app.asar', 'app.asar.unpacked');
 
-const { detectSubtitleSpeechSegments } = require('../src/subtitleVad');
+const { extractAudioToTempWav, readMono16kWav, safeRemoveFile } = require('../src/audioUtils');
 const { getAsrEngineStatus } = require('../src/asrEngine');
-
-function runCommand(cmd, args) {
-  return new Promise((resolve, reject) => {
-    const proc = spawn(cmd, args, { windowsHide: true });
-    let stderr = '';
-    proc.stderr.on('data', (d) => { stderr += d.toString(); });
-    proc.on('error', reject);
-    proc.on('close', (code) => {
-      if (code === 0) resolve();
-      else reject(new Error(`${cmd} exit=${code}\n${stderr}`));
-    });
-  });
-}
-
-async function extractAudioWav(videoPath) {
-  const wavPath = path.join(os.tmpdir(), `vadcut_diag_${Date.now()}_${Math.random().toString(36).slice(2)}.wav`);
-  await runCommand(ffmpegPath, [
-    '-i', videoPath,
-    '-vn', '-ar', '16000', '-ac', '1',
-    '-f', 'wav', '-y', wavPath,
-  ]);
-  return wavPath;
-}
-
-function readWavSamples(wavPath) {
-  const buf = fs.readFileSync(wavPath);
-  let off = 12;
-  while (off < buf.length - 8) {
-    const id = buf.toString('ascii', off, off + 4);
-    const sz = buf.readUInt32LE(off + 4);
-    if (id === 'data') {
-      const pcm = buf.subarray(off + 8, off + 8 + sz);
-      const f32 = new Float32Array(pcm.length / 2);
-      for (let i = 0; i < f32.length; i++) f32[i] = pcm.readInt16LE(i * 2) / 32768;
-      return f32;
-    }
-    off += 8 + sz;
-  }
-  throw new Error('WAV data chunk 未找到');
-}
+const { detectSubtitleSpeechSegments } = require('../src/subtitleVad');
 
 function createRecognizer(engine) {
   return new sherpaNode.OfflineRecognizer({
@@ -80,9 +38,9 @@ async function run() {
     throw new Error('原生引擎未就绪，请先下载模型');
   }
 
-  const wavPath = await extractAudioWav(input);
+  const wavPath = await extractAudioToTempWav(input);
   try {
-    const samples = readWavSamples(wavPath);
+    const samples = readMono16kWav(wavPath);
 
     const tVad0 = process.hrtime.bigint();
     const nativeOut = detectSubtitleSpeechSegments(samples);
@@ -124,7 +82,7 @@ async function run() {
       },
     }, null, 2));
   } finally {
-    try { fs.unlinkSync(wavPath); } catch (_) {}
+    safeRemoveFile(wavPath);
   }
 }
 
