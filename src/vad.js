@@ -6,7 +6,6 @@
 
 const fs = require('fs');
 const path = require('path');
-const sherpaNode = require('sherpa-onnx-node');
 
 const { readMono16kWav } = require('./audioUtils');
 const { resolveBundledModelsRoot } = require('./runtimePaths');
@@ -14,13 +13,21 @@ const { throwIfCancelled } = require('./taskCancellation');
 
 const MODEL_PATH = path.join(resolveBundledModelsRoot(__dirname), 'silero_vad.onnx');
 const SAMPLE_RATE = 16000;
+let _sherpaNode = null;
+
+function getSherpaNode() {
+  if (!_sherpaNode) {
+    _sherpaNode = require('sherpa-onnx-node');
+  }
+  return _sherpaNode;
+}
 
 function createNativeVad(opts = {}, bufferSizeInSeconds = 60) {
   if (!fs.existsSync(MODEL_PATH)) {
     throw new Error(`VAD 模型不存在: ${MODEL_PATH}`);
   }
 
-  return new sherpaNode.Vad({
+  return new (getSherpaNode().Vad)({
     sileroVad: {
       model: MODEL_PATH,
       threshold: opts.threshold || 0.9,
@@ -34,6 +41,115 @@ function createNativeVad(opts = {}, bufferSizeInSeconds = 60) {
     provider: opts.provider || 'cpu',
     debug: opts.debug || 0,
   }, bufferSizeInSeconds);
+}
+
+function getSegmentDuration(seg) {
+  return Math.max(0, Number(seg?.end || 0) - Number(seg?.start || 0));
+}
+
+function getSegmentGap(prevSeg, nextSeg) {
+  return Math.max(0, Number(nextSeg?.start || 0) - Number(prevSeg?.end || 0));
+}
+
+function findLeadingKeepIndex(segments, minEdgeSpeechDuration, edgeMergeGapSec) {
+  let idx = 0;
+
+  while (idx < segments.length) {
+    let clusterEnd = idx;
+    let speechDuration = getSegmentDuration(segments[idx]);
+
+    if (speechDuration >= minEdgeSpeechDuration) {
+      return idx;
+    }
+
+    while (clusterEnd + 1 < segments.length) {
+      const nextSeg = segments[clusterEnd + 1];
+      if (getSegmentGap(segments[clusterEnd], nextSeg) > edgeMergeGapSec) {
+        break;
+      }
+
+      clusterEnd += 1;
+      speechDuration += getSegmentDuration(segments[clusterEnd]);
+      if (speechDuration >= minEdgeSpeechDuration) {
+        return idx;
+      }
+    }
+
+    idx = clusterEnd + 1;
+  }
+
+  return segments.length;
+}
+
+function findTrailingKeepIndex(segments, minEdgeSpeechDuration, edgeMergeGapSec) {
+  let idx = segments.length - 1;
+
+  while (idx >= 0) {
+    let clusterStart = idx;
+    let speechDuration = getSegmentDuration(segments[idx]);
+
+    if (speechDuration >= minEdgeSpeechDuration) {
+      return idx;
+    }
+
+    while (clusterStart - 1 >= 0) {
+      const prevSeg = segments[clusterStart - 1];
+      if (getSegmentGap(prevSeg, segments[clusterStart]) > edgeMergeGapSec) {
+        break;
+      }
+
+      clusterStart -= 1;
+      speechDuration += getSegmentDuration(segments[clusterStart]);
+      if (speechDuration >= minEdgeSpeechDuration) {
+        return idx;
+      }
+    }
+
+    idx = clusterStart - 1;
+  }
+
+  return -1;
+}
+
+function filterEdgeSegments(segments, opts = {}) {
+  const minEdgeSpeechDuration = Number.isFinite(opts.minEdgeSpeechDuration)
+    ? Math.max(0, opts.minEdgeSpeechDuration)
+    : 1.0;
+  const edgeMergeGapSec = Number.isFinite(opts.edgeMergeGapSec)
+    ? Math.max(0, opts.edgeMergeGapSec)
+    : 0.3;
+
+  if (!Array.isArray(segments) || segments.length === 0) {
+    return {
+      effectiveSegments: [],
+      ignoredLeadingSegments: 0,
+      ignoredTrailingSegments: 0,
+      edgeFilterFallback: false,
+    };
+  }
+
+  const startIdx = minEdgeSpeechDuration === 0
+    ? 0
+    : findLeadingKeepIndex(segments, minEdgeSpeechDuration, edgeMergeGapSec);
+  const endIdx = minEdgeSpeechDuration === 0
+    ? segments.length - 1
+    : findTrailingKeepIndex(segments, minEdgeSpeechDuration, edgeMergeGapSec);
+
+  if (startIdx > endIdx) {
+    return {
+      effectiveSegments: segments.slice(),
+      ignoredLeadingSegments: 0,
+      ignoredTrailingSegments: 0,
+      edgeFilterFallback: true,
+    };
+  }
+
+  return {
+    effectiveSegments: segments.slice(startIdx, endIdx + 1),
+    ignoredLeadingSegments: startIdx,
+    ignoredTrailingSegments: segments.length - 1 - endIdx,
+    edgeFilterFallback: false,
+  };
 }
 
 function detectSpeechBounds(wavPath, opts = {}) {
@@ -78,29 +194,12 @@ function detectSpeechBounds(wavPath, opts = {}) {
   const minEdgeSpeechDuration = Number.isFinite(opts.minEdgeSpeechDuration)
     ? Math.max(0, opts.minEdgeSpeechDuration)
     : 1.0;
-  const getDuration = (seg) => Math.max(0, seg.end - seg.start);
-
-  let startIdx = 0;
-  let endIdx = segments.length - 1;
-
-  while (startIdx <= endIdx && getDuration(segments[startIdx]) < minEdgeSpeechDuration) {
-    startIdx += 1;
-  }
-  while (endIdx >= startIdx && getDuration(segments[endIdx]) < minEdgeSpeechDuration) {
-    endIdx -= 1;
-  }
-
-  let ignoredLeadingSegments = startIdx;
-  let ignoredTrailingSegments = segments.length - 1 - endIdx;
-  let edgeFilterFallback = false;
-  let effectiveSegments = segments.slice(startIdx, endIdx + 1);
-
-  if (effectiveSegments.length === 0) {
-    ignoredLeadingSegments = 0;
-    ignoredTrailingSegments = 0;
-    edgeFilterFallback = true;
-    effectiveSegments = segments;
-  }
+  const {
+    effectiveSegments,
+    ignoredLeadingSegments,
+    ignoredTrailingSegments,
+    edgeFilterFallback,
+  } = filterEdgeSegments(segments, opts);
 
   const firstSpeechTime = effectiveSegments[0].start;
   const lastSpeechTime = effectiveSegments[effectiveSegments.length - 1].end;
@@ -123,4 +222,5 @@ module.exports = {
   SAMPLE_RATE,
   createNativeVad,
   detectSpeechBounds,
+  filterEdgeSegments,
 };

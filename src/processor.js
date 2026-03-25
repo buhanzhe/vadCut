@@ -147,6 +147,7 @@ async function processVideo(videoPath, outputDir, callbacks = {}, options = {}) 
       edgeFilterFallback,
     } = detectSpeechBounds(wavPath, {
       minEdgeSpeechDuration: 1.0,
+      edgeMergeGapSec: 0.3,
       signal,
     });
     onStage('vad', 100);
