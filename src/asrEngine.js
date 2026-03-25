@@ -180,25 +180,6 @@ const SUBTITLE_SCHEMES = [
       { key: 'configuration', path: 'configuration.json', required: false, expectedSize: 56 },
     ],
   },
-  {
-    schemeId: 'whisper-turbo',
-    label: 'Whisper Turbo（高准确率）',
-    description: '高准确率离线方案，模型更大，适合对字幕质量更敏感的批处理任务。',
-    runtimeType: 'offline',
-    recognizerType: 'whisper',
-    downloadProvider: 'huggingface',
-    sourceUrl: 'https://huggingface.co/pengzhendong/sherpa-onnx-whisper-turbo',
-    repoId: 'pengzhendong/sherpa-onnx-whisper-turbo',
-    downloadMode: 'confirm',
-    downloadSizeLabel: '4.27GB',
-    modelDir: 'sherpa-onnx-whisper-turbo',
-    requiredFiles: [
-      { key: 'encoder', path: 'turbo-encoder.onnx', required: true },
-      { key: 'encoderWeights', path: 'turbo-encoder.weights', required: true },
-      { key: 'decoder', path: 'turbo-decoder.onnx', required: true },
-      { key: 'tokens', path: 'turbo-tokens.txt', required: true },
-    ],
-  },
 ];
 
 const SUBTITLE_SCHEME_MAP = new Map(

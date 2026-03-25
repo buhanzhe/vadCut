@@ -104,7 +104,6 @@ npm start
 | `zipformer-bilingual` | 在线 | 流式 transducer 方案，适合双语内容补充 |
 | `sense-voice` | 离线 | 多语种方案，适合中文、英文、粤语等混合内容 |
 | `offline-paraformer-zh` | 离线 | 中文方案，支持 `DirectML / CPU`，适合本地批处理 |
-| `whisper-turbo` | 离线 | 高准确率方案，首次下载约 `4.27GB` |
 
 字幕模型默认下载到：
 
