@@ -1,7 +1,7 @@
 {
   "name": "vad-cut",
   "version": "1.0.1",
-  "description": "课程视频掐头去尾剪辑工具 - 基于VAD自动识别有效内容边界",
+  "description": "课程视频处理工具 - 支持剪辑、转码与字幕提取",
   "main": "electron/main.js",
   "scripts": {
     "postinstall": "node scripts/patch-sherpa-runtime.js",

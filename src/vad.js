@@ -9,18 +9,11 @@ const path = require('path');
 
 const { readMono16kWav } = require('./audioUtils');
 const { resolveBundledModelsRoot } = require('./runtimePaths');
+const { getSherpaNode } = require('./sherpaNode');
 const { throwIfCancelled } = require('./taskCancellation');
 
 const MODEL_PATH = path.join(resolveBundledModelsRoot(__dirname), 'silero_vad.onnx');
 const SAMPLE_RATE = 16000;
-let _sherpaNode = null;
-
-function getSherpaNode() {
-  if (!_sherpaNode) {
-    _sherpaNode = require('sherpa-onnx-node');
-  }
-  return _sherpaNode;
-}
 
 function createNativeVad(opts = {}, bufferSizeInSeconds = 60) {
   if (!fs.existsSync(MODEL_PATH)) {

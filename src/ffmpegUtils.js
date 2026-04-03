@@ -230,37 +230,8 @@ const VIDEO_FILTER_CHAIN = [
 
 const AUDIO_FILTER_CHAIN = 'highpass=f=100,afftdn=nr=12:nf=-35:nt=w:track_noise=true,lowpass=f=12000';
 
-async function trimVideo(
-  inputPath,
-  outputPath,
-  startTime,
-  endTime,
-  totalDuration,
-  onProgress,
-  options = {}
-) {
-  const signal = options.signal || null;
-  const PAD = 0.5;
-  const actualStart = Math.max(0, startTime - PAD);
-  const actualEnd = endTime < 0 ? totalDuration : Math.min(totalDuration, endTime + PAD);
-  const duration = actualEnd - actualStart;
-
-  if (duration <= 0) {
-    throw new Error(`剪辑时长无效: start=${actualStart}, end=${actualEnd}`);
-  }
-
-  const gpuEnc = await detectEncoder();
-  const tmpOut = makeTempPath('.mp4');
-  const commonArgs = [
-    '-i', inputPath,
-    '-ss', String(actualStart),
-    '-t', String(duration),
-    '-vf', VIDEO_FILTER_CHAIN,
-    '-af', AUDIO_FILTER_CHAIN,
-    '-c:a', 'aac',
-    '-b:a', '128k',
-  ];
-  const encodingArgs = gpuEnc
+function buildEncodingArgs(gpuEnc) {
+  return gpuEnc
     ? [
       '-c:v', gpuEnc.encoder,
       ...gpuEnc.extraOpts,
@@ -279,11 +250,62 @@ async function trimVideo(
       '-r', '24',
       '-movflags', '+faststart',
     ];
+}
 
+function buildMediaFilterArgs({
+  inputPath,
+  hasAudio = true,
+  startTime = null,
+  duration = null,
+}) {
+  const args = ['-i', inputPath];
+
+  if (Number.isFinite(startTime) && startTime > 0) {
+    args.push('-ss', String(startTime));
+  }
+  if (Number.isFinite(duration) && duration > 0) {
+    args.push('-t', String(duration));
+  }
+
+  args.push('-vf', VIDEO_FILTER_CHAIN);
+
+  if (hasAudio) {
+    args.push(
+      '-af', AUDIO_FILTER_CHAIN,
+      '-c:a', 'aac',
+      '-b:a', '128k'
+    );
+  } else {
+    args.push('-an');
+  }
+
+  return args;
+}
+
+async function runVideoTransform(
+  inputPath,
+  outputPath,
+  durationSec,
+  onProgress,
+  options = {}
+) {
+  const {
+    hasAudio = true,
+    signal = null,
+    startTime = null,
+    clipDuration = null,
+  } = options;
+  const gpuEnc = await detectEncoder();
+  const tmpOut = makeTempPath('.mp4');
   const args = [
     ...(gpuEnc ? ['-hwaccel', gpuEnc.hwaccel] : []),
-    ...commonArgs,
-    ...encodingArgs,
+    ...buildMediaFilterArgs({
+      inputPath,
+      hasAudio,
+      startTime,
+      duration: clipDuration,
+    }),
+    ...buildEncodingArgs(gpuEnc),
     '-y',
     tmpOut,
   ];
@@ -292,7 +314,7 @@ async function trimVideo(
     await runFfmpeg(args, {
       signal,
       onProgress,
-      durationSec: duration,
+      durationSec,
     });
     const moved = moveFile(tmpOut, outputPath);
     if (moved && typeof moved.then === 'function') {
@@ -302,10 +324,49 @@ async function trimVideo(
     safeRemoveFile(tmpOut);
     if (gpuEnc && !isCancelledError(err)) {
       _encoderCache = null;
-      return trimVideo(inputPath, outputPath, startTime, endTime, totalDuration, onProgress, options);
+      return runVideoTransform(inputPath, outputPath, durationSec, onProgress, options);
     }
     throw err;
   }
+}
+
+async function trimVideo(
+  inputPath,
+  outputPath,
+  startTime,
+  endTime,
+  totalDuration,
+  onProgress,
+  options = {}
+) {
+  const PAD = 0.5;
+  const actualStart = Math.max(0, startTime - PAD);
+  const actualEnd = endTime < 0 ? totalDuration : Math.min(totalDuration, endTime + PAD);
+  const duration = actualEnd - actualStart;
+
+  if (duration <= 0) {
+    throw new Error(`剪辑时长无效: start=${actualStart}, end=${actualEnd}`);
+  }
+
+  return runVideoTransform(inputPath, outputPath, duration, onProgress, {
+    ...options,
+    hasAudio: true,
+    startTime: actualStart,
+    clipDuration: duration,
+  });
+}
+
+async function transcodeVideo(
+  inputPath,
+  outputPath,
+  totalDuration,
+  onProgress,
+  options = {}
+) {
+  return runVideoTransform(inputPath, outputPath, totalDuration, onProgress, {
+    ...options,
+    hasAudio: options.hasAudio !== false,
+  });
 }
 
 module.exports = {
@@ -313,5 +374,6 @@ module.exports = {
   getEncoderInfo,
   getVideoMetadata,
   moveFile,
+  transcodeVideo,
   trimVideo,
 };

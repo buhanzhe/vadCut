@@ -2,19 +2,20 @@
 
 ![VAD-Cut 截图](build/app.png)
 
-`VAD-Cut` 是一个面向 Windows 的课程录屏批处理工具，基于 `Silero VAD` 自动定位有效语音边界，用来批量掐头去尾；同时提供独立的字幕提取模式，支持多种 `sherpa-onnx-node` 字幕方案按需下载。
+`VAD-Cut` 是一个面向 Windows 的课程录屏批处理工具，基于 `Silero VAD` 自动定位有效语音边界，用来批量掐头去尾；同时提供独立的纯转码模式和字幕提取模式，支持多种 `sherpa-onnx-node` 字幕方案按需下载。
 
 ## 当前能力
 
 | 能力 | 说明 |
 |------|------|
 | 剪辑模式 | 自动定位第一句话和最后一句话，裁掉头尾静默或杂音片段 |
+| 转码模式 | 不分析语音边界，只对整段视频做统一转码与画面/音频处理 |
 | 字幕模式 | 不改视频本体，直接在原目录批量生成 `.srt` |
 | 多字幕方案 | 支持 Paraformer、Zipformer、SenseVoice、Offline Paraformer、Whisper Turbo |
 | 下载管理 | 字幕模型按需下载，可取消，当前方案会持久化保存 |
 | GPU 编码 | 自动探测 NVIDIA NVENC / AMD AMF / Intel QSV，失败时回退 `libx264` |
 | ASR Provider 回退 | `Offline Paraformer` 支持 `DirectML -> CPU` 回退 |
-| 批量处理 | 剪辑模式最多 4 路并发；字幕模式使用独立子进程，最多 2 路并发 |
+| 批量处理 | 剪辑 / 转码模式最多 4 路并发；字幕模式使用独立子进程，最多 2 路并发 |
 | 容错与跳过 | 已存在输出文件会自动跳过；任务支持取消 |
 
 ## 处理策略
@@ -33,6 +34,7 @@
 **输出：**
 
 - 剪辑模式：`剪辑/*.mp4`
+- 转码模式：`转码/*.mp4`
 - 字幕模式：原目录同名 `.srt`
 
 ## 运行环境
@@ -94,6 +96,24 @@ npm start
 ├── 01.srt
 ├── 02.mts
 └── 02.srt
+```
+
+### 3. 转码模式
+
+1. 打开左侧 `转码` 标签
+2. 选择包含视频的文件夹
+3. 点击 `开始转码`
+4. 结果输出到原目录下的 `转码/` 子目录
+
+示例：
+
+```text
+课程录屏/
+├── 01.mts
+├── 02.mts
+└── 转码/
+    ├── 01.mp4
+    └── 02.mp4
 ```
 
 ## 字幕方案
@@ -175,9 +195,9 @@ renderer/
   app.js                  前端交互逻辑
   style.css               样式
 src/
-  processor.js            剪辑主流程
+  processor.js            批处理主流程
   batchRunner.js          并发批处理调度
-  ffmpegUtils.js          编码器探测与剪辑
+  ffmpegUtils.js          编码器探测、剪辑与转码
   ffmpegRunner.js         ffmpeg 执行封装
   vad.js                  Silero VAD 与边界过滤
   subtitleVad.js          字幕分句 VAD

@@ -8,7 +8,6 @@
 
 const path = require('path');
 const fs = require('fs');
-const sherpaNode = require('sherpa-onnx-node');
 
 const {
   DEFAULT_SUBTITLE_SCHEME_ID,
@@ -29,6 +28,7 @@ const { detectSubtitleSpeechSegments } = require('./subtitleVad');
 const {
   throwIfCancelled,
 } = require('./taskCancellation');
+const { getSherpaNode } = require('./sherpaNode');
 
 const SAMPLE_RATE = 16000;
 const FEATURE_DIM = 80;
@@ -62,6 +62,7 @@ function freeNativeHandle(instance) {
 }
 
 function createWhisperRecognizer(assets, numThreads) {
+  const sherpaNode = getSherpaNode();
   return new sherpaNode.OfflineRecognizer({
     featConfig: {
       sampleRate: SAMPLE_RATE,
@@ -86,6 +87,7 @@ function createWhisperRecognizer(assets, numThreads) {
 }
 
 function createSenseVoiceRecognizer(assets, numThreads) {
+  const sherpaNode = getSherpaNode();
   return new sherpaNode.OfflineRecognizer({
     featConfig: {
       sampleRate: SAMPLE_RATE,
@@ -113,6 +115,7 @@ function getOfflineParaformerModelPath(assets, provider) {
 }
 
 function createOfflineParaformerRecognizer(assets, numThreads, provider) {
+  const sherpaNode = getSherpaNode();
   return new sherpaNode.OfflineRecognizer({
     featConfig: {
       sampleRate: SAMPLE_RATE,
@@ -131,6 +134,7 @@ function createOfflineParaformerRecognizer(assets, numThreads, provider) {
 }
 
 function createParaformerRecognizer(assets, numThreads) {
+  const sherpaNode = getSherpaNode();
   return new sherpaNode.OnlineRecognizer({
     featConfig: {
       sampleRate: SAMPLE_RATE,
@@ -153,6 +157,7 @@ function createParaformerRecognizer(assets, numThreads) {
 }
 
 function createTransducerRecognizer(assets, numThreads) {
+  const sherpaNode = getSherpaNode();
   return new sherpaNode.OnlineRecognizer({
     featConfig: {
       sampleRate: SAMPLE_RATE,

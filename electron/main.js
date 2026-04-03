@@ -328,7 +328,7 @@ function startProcessJob(folderPath, options) {
   }
 
   const job = {
-    kind: options.subtitleOnly ? 'subtitle' : 'clip',
+    kind: options.subtitleOnly ? 'subtitle' : (options.transcodeOnly ? 'transcode' : 'clip'),
     signal: { cancelled: false },
     children: new Set(),
     workerKillTimers: new Map(),
@@ -443,7 +443,7 @@ function createWindow() {
     height: 680,
     minWidth: 700,
     minHeight: 520,
-    title: 'VAD-Cut 课程视频剪辑',
+    title: 'VAD-Cut 课程视频处理',
     ...(fs.existsSync(path.join(__dirname, '..', 'renderer', 'icon.png'))
       ? { icon: path.join(__dirname, '..', 'renderer', 'icon.png') }
       : {}),

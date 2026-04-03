@@ -26,19 +26,59 @@ if (!fs.existsSync(wrapperDir)) {
 
 const patchedAddonStaticImport = `'use strict';
 
+const fs = require('fs');
 const os = require('os');
+const path = require('path');
 
 let addon = null;
 
 const platform = os.platform() === 'win32' ? 'win' : os.platform();
 const arch = os.arch();
 
-try {
-  if (platform === 'win' && arch === 'x64') {
-    addon = require('../../vendor/sherpa-onnx-win-x64/sherpa-onnx.node');
+function appendUniquePath(target, filePath) {
+  if (!filePath) return;
+  const normalized = path.normalize(filePath);
+  if (!target.includes(normalized)) {
+    target.push(normalized);
   }
-} catch (error) {
-  //
+}
+
+function getAddonCandidates() {
+  const candidates = [];
+  if (platform === 'win' && arch === 'x64') {
+    appendUniquePath(candidates, path.join(__dirname, '..', '..', 'vendor', 'sherpa-onnx-win-x64', 'sherpa-onnx.node'));
+
+    if (__dirname.includes('app.asar')) {
+      appendUniquePath(
+        candidates,
+        path.join(__dirname.replace('app.asar', 'app.asar.unpacked'), '..', '..', 'vendor', 'sherpa-onnx-win-x64', 'sherpa-onnx.node')
+      );
+    }
+
+    if (process.resourcesPath) {
+      appendUniquePath(
+        candidates,
+        path.join(process.resourcesPath, 'app.asar.unpacked', 'vendor', 'sherpa-onnx-win-x64', 'sherpa-onnx.node')
+      );
+      appendUniquePath(
+        candidates,
+        path.join(process.resourcesPath, 'vendor', 'sherpa-onnx-win-x64', 'sherpa-onnx.node')
+      );
+    }
+  }
+  return candidates;
+}
+
+for (const candidate of getAddonCandidates()) {
+  try {
+    if (!fs.existsSync(candidate)) {
+      continue;
+    }
+    addon = require(candidate);
+    break;
+  } catch (error) {
+    //
+  }
 }
 
 module.exports = addon;

@@ -10,7 +10,7 @@ const path = require('path');
 
 const { extractAudioToTempWav, safeRemoveFile } = require('./audioUtils');
 const { formatElapsed, runBatch } = require('./batchRunner');
-const { getVideoMetadata, trimVideo, getEncoderInfo } = require('./ffmpegUtils');
+const { getVideoMetadata, trimVideo, transcodeVideo, getEncoderInfo } = require('./ffmpegUtils');
 const { transcribeVideo } = require('./asr');
 const { resolveSubtitleSchemeInfo } = require('./asrEngine');
 const { detectSpeechBounds } = require('./vad');
@@ -21,6 +21,7 @@ const VIDEO_EXTENSIONS = new Set([
 ]);
 
 const OUTPUT_SUBDIR = '剪辑';
+const OUTPUT_TRANSCODE_SUBDIR = '转码';
 const MAX_CONCURRENCY = 4;
 
 function formatTime(seconds) {
@@ -90,14 +91,53 @@ async function processSubtitleFile(videoPath, callbacks = {}, options = {}) {
   };
 }
 
-async function processVideo(videoPath, outputDir, callbacks = {}, options = {}) {
+async function processTranscodeFile(videoPath, outputDir, callbacks = {}, options = {}) {
   const { onLog = () => {}, onStage = () => {} } = callbacks;
   const signal = options.signal || null;
+  const startedAt = Date.now();
+  const extRaw = path.extname(videoPath);
+  const nameWithoutExt = path.basename(videoPath, extRaw);
+  const outputPath = path.join(outputDir, `${nameWithoutExt}.mp4`);
 
-  if (options.subtitleOnly) {
-    return processSubtitleFile(videoPath, callbacks, options);
+  if (fs.existsSync(outputPath)) {
+    onLog('已跳过（输出文件已存在）');
+    return { skipped: true, transcodeOnly: true };
   }
 
+  onLog('读取视频元数据...');
+  onStage('metadata', 0);
+  const metadata = await getVideoMetadata(videoPath);
+  const totalDuration = Number(metadata.format.duration);
+  const hasAudio = metadata.streams.some((stream) => stream.codec_type === 'audio');
+  onLog(`时长: ${formatTime(totalDuration)}`);
+  onStage('metadata', 100);
+
+  if (!hasAudio) {
+    onLog('未检测到音频轨道，将仅转码视频画面');
+  }
+
+  onLog(`编码器: ${await getEncoderInfo()}`);
+  onLog('转码中...');
+  onStage('transcode', 0);
+  await transcodeVideo(videoPath, outputPath, totalDuration, (pct) => onStage('transcode', pct), {
+    signal,
+    hasAudio,
+  });
+  onStage('transcode', 100);
+  onLog(`输出: ${path.basename(outputPath)}`);
+  onLog(`耗时: ${formatElapsed(Date.now() - startedAt)}`);
+
+  return {
+    transcodeOnly: true,
+    outputPath,
+    totalDuration,
+    elapsed: Date.now() - startedAt,
+  };
+}
+
+async function processClipFile(videoPath, outputDir, callbacks = {}, options = {}) {
+  const { onLog = () => {}, onStage = () => {} } = callbacks;
+  const signal = options.signal || null;
   const startedAt = Date.now();
   const extRaw = path.extname(videoPath);
   const nameWithoutExt = path.basename(videoPath, extRaw);
@@ -220,6 +260,18 @@ async function processVideo(videoPath, outputDir, callbacks = {}, options = {}) 
   }
 }
 
+async function processVideo(videoPath, outputDir, callbacks = {}, options = {}) {
+  if (options.subtitleOnly) {
+    return processSubtitleFile(videoPath, callbacks, options);
+  }
+
+  if (options.transcodeOnly) {
+    return processTranscodeFile(videoPath, outputDir, callbacks, options);
+  }
+
+  return processClipFile(videoPath, outputDir, callbacks, options);
+}
+
 async function processFolder(folderPath, callbacks = {}, signal = { cancelled: false }, options = {}) {
   const {
     onScan = () => {},
@@ -239,7 +291,9 @@ async function processFolder(folderPath, callbacks = {}, signal = { cancelled: f
     return;
   }
 
-  const outputDir = options.subtitleOnly ? folderPath : path.join(folderPath, OUTPUT_SUBDIR);
+  const outputDir = options.subtitleOnly
+    ? folderPath
+    : path.join(folderPath, options.transcodeOnly ? OUTPUT_TRANSCODE_SUBDIR : OUTPUT_SUBDIR);
   const subtitleScheme = resolveSubtitleSchemeInfo(options.subtitleScheme);
   if (!options.subtitleOnly && !fs.existsSync(outputDir)) {
     fs.mkdirSync(outputDir, { recursive: true });
@@ -249,6 +303,8 @@ async function processFolder(folderPath, callbacks = {}, signal = { cancelled: f
   onFileLog(-1, `并发数: ${concurrency}`);
   if (options.subtitleOnly) {
     onFileLog(-1, `字幕方案: ${subtitleScheme.label}`);
+  } else if (options.transcodeOnly) {
+    onFileLog(-1, '模式: 仅转码');
   }
 
   const summary = await runBatch({
@@ -280,6 +336,7 @@ async function processFolder(folderPath, callbacks = {}, signal = { cancelled: f
 
 module.exports = {
   OUTPUT_SUBDIR,
+  OUTPUT_TRANSCODE_SUBDIR,
   VIDEO_EXTENSIONS,
   processFolder,
   processVideo,

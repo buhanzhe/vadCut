@@ -60,6 +60,26 @@ const panels = {
     logPanel: $('#log-panel'),
     btnClearLog: $('#btn-clear-log'),
   },
+  transcode: {
+    tabButton: $('[data-tab="transcode"]'),
+    panel: $('#panel-transcode'),
+    dropzone: $('#trans-dropzone'),
+    toolbar: $('#trans-toolbar'),
+    folderPathEl: $('#trans-folder-path'),
+    btnChange: $('#trans-btn-change'),
+    btnStart: $('#trans-btn-start'),
+    btnCancel: $('#trans-btn-cancel'),
+    btnOpenOutput: $('#trans-btn-open-output'),
+    overallProgress: $('#trans-overall-progress'),
+    progressLabel: $('#trans-progress-label'),
+    progressCount: $('#trans-progress-count'),
+    progressBar: $('#trans-progress-bar'),
+    fileListSection: $('#trans-file-list-section'),
+    fileList: $('#trans-file-list'),
+    logSection: $('#trans-log-section'),
+    logPanel: $('#trans-log-panel'),
+    btnClearLog: $('#trans-btn-clear-log'),
+  },
   subtitle: {
     tabButton: $('[data-tab="subtitle"]'),
     panel: $('#panel-subtitle'),
@@ -84,6 +104,7 @@ const panels = {
 
 const states = {
   clip: { folderPath: null, files: [], running: false, outputDir: null },
+  transcode: { folderPath: null, files: [], running: false, outputDir: null },
   subtitle: { folderPath: null, files: [], running: false, outputDir: null },
 };
 
@@ -112,6 +133,7 @@ let runningTab = null;
 const MAX_LOG_LINES = 400;
 const renderQueues = {
   clip: createRenderQueue(),
+  transcode: createRenderQueue(),
   subtitle: createRenderQueue(),
 };
 
@@ -208,6 +230,7 @@ function stageLabel(stage) {
     audio: '提取音频',
     vad: 'VAD检测',
     trim: '剪辑视频',
+    transcode: '转码视频',
     asr: '提取字幕',
   }[stage] || stage;
 }
@@ -246,9 +269,13 @@ function badgeText(file, tab) {
     case 'running':
       return file.stageLabel || '处理中';
     case 'done':
-      return tab === 'subtitle'
-        ? '字幕已生成'
-        : `切头${(file.result?.headCut || 0).toFixed(1)}s 切尾${(file.result?.tailCut || 0).toFixed(1)}s`;
+      if (tab === 'subtitle') {
+        return '字幕已生成';
+      }
+      if (tab === 'transcode') {
+        return '转码已完成';
+      }
+      return `切头${(file.result?.headCut || 0).toFixed(1)}s 切尾${(file.result?.tailCut || 0).toFixed(1)}s`;
     case 'skip':
       return '已跳过';
     case 'error':
@@ -267,6 +294,12 @@ function buildResultText(file, tab) {
     return srtName
       ? `SRT 已生成${schemeLabel} → ${srtName}`
       : `SRT 字幕已生成${schemeLabel}`;
+  }
+  if (tab === 'transcode') {
+    const outputName = file.result?.outputPath?.split(/[\\/]/).pop();
+    return outputName
+      ? `已转码 → ${outputName}`
+      : '已完成转码';
   }
   return `已剪辑 → 切掉开头 ${(file.result?.headCut || 0).toFixed(1)}s，结尾 ${(file.result?.tailCut || 0).toFixed(1)}s`;
 }
@@ -571,7 +604,10 @@ async function startProcessing(tab) {
   const refs = panels[tab];
   if (!state.folderPath || state.running || runningTab) return;
 
-  const options = { subtitleOnly: tab === 'subtitle' };
+  const options = {
+    subtitleOnly: tab === 'subtitle',
+    transcodeOnly: tab === 'transcode',
+  };
   if (tab === 'subtitle') {
     const scheme = getSelectedSubtitleScheme();
     if (!scheme) {
@@ -608,7 +644,13 @@ async function startProcessing(tab) {
       addLog('subtitle', `字幕方案: ${scheme.label}`, 'info');
     }
   }
-  addLog(tab, tab === 'subtitle' ? '开始提取字幕...' : '开始剪辑...', 'info');
+  addLog(
+    tab,
+    tab === 'subtitle'
+      ? '开始提取字幕...'
+      : (tab === 'transcode' ? '开始转码...' : '开始剪辑...'),
+    'info'
+  );
   registerIPCListeners(tab);
   updateSubtitleSchemeControls();
 
@@ -729,6 +771,9 @@ function registerIPCListeners(tab) {
       state.files[index].status = 'done';
       const schemeSuffix = result.subtitleSchemeLabel ? ` (${result.subtitleSchemeLabel})` : '';
       addLog(tab, `  → 字幕已生成 ✓${schemeSuffix}`, 'success');
+    } else if (tab === 'transcode') {
+      state.files[index].status = 'done';
+      addLog(tab, '  → 转码完成 ✓', 'success');
     } else {
       state.files[index].status = 'done';
       addLog(tab, `  → 完成 ✓ 切头 ${result.headCut.toFixed(1)}s，切尾 ${result.tailCut.toFixed(1)}s`, 'success');
@@ -756,7 +801,9 @@ function registerIPCListeners(tab) {
 
     if (summary.error) {
       addLog(tab, `处理异常: ${summary.error}`, 'error');
-      refs.progressLabel.textContent = tab === 'subtitle' ? '提取出错' : '处理出错';
+      refs.progressLabel.textContent = tab === 'subtitle'
+        ? '提取出错'
+        : (tab === 'transcode' ? '转码出错' : '处理出错');
       if (tab === 'subtitle') {
         syncSubtitleStartAvailability();
         updateSubtitleSchemeControls();
@@ -774,7 +821,9 @@ function registerIPCListeners(tab) {
       : '';
     const msg = summary.total === 0
       ? '未找到视频文件'
-      : `${tab === 'subtitle' ? `提取完成${schemeSuffix}` : '处理完成'}：成功 ${summary.success}，跳过 ${summary.skipped}，出错 ${summary.errors}`;
+      : `${tab === 'subtitle'
+        ? `提取完成${schemeSuffix}`
+        : (tab === 'transcode' ? '转码完成' : '处理完成')}：成功 ${summary.success}，跳过 ${summary.skipped}，出错 ${summary.errors}`;
     refs.progressLabel.textContent = msg;
     addLog(tab, msg, summary.errors > 0 ? 'warn' : 'success');
 

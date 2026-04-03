@@ -1,14 +1,18 @@
 'use strict';
 
-const path = require('path');
+const fs = require('fs');
 
-const addonPath = path.join(
-  __dirname,
-  '..',
-  'node_modules',
-  'sherpa-onnx-win-x64',
-  'sherpa-onnx.node'
-);
+const { getSherpaAddonCandidates } = require('../src/sherpaNode');
+
+const addonPath = getSherpaAddonCandidates().find((candidate) => fs.existsSync(candidate));
+
+if (!addonPath) {
+  console.error('FAIL: no bundled sherpa addon candidate exists');
+  for (const candidate of getSherpaAddonCandidates()) {
+    console.error(`  ${candidate}`);
+  }
+  process.exit(1);
+}
 
 try {
   require(addonPath);
